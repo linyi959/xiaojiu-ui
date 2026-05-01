@@ -5,6 +5,11 @@ import { useAppStore } from '@/stores/hermes/app'
 import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
+const props = withDefaults(defineProps<{
+  compact?: boolean
+}>(), {
+  compact: false,
+})
 const appStore = useAppStore()
 
 const showModal = ref(false)
@@ -86,9 +91,10 @@ function openModal() {
 </script>
 
 <template>
-  <div class="model-selector">
-    <div class="model-label">{{ t('models.title') }}</div>
+  <div class="model-selector" :class="{ compact: props.compact }">
+    <div v-if="!props.compact" class="model-label">{{ t('models.title') }}</div>
     <button class="model-trigger" @click="openModal">
+      <span v-if="props.compact" class="model-prefix">Model</span>
       <span class="model-name" :title="appStore.selectedModel">{{ appStore.selectedModel || '—' }}</span>
       <svg class="model-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <polyline points="6 9 12 15 18 9" />
@@ -178,6 +184,43 @@ function openModal() {
 .model-selector {
   padding: 0 12px;
   margin-bottom: 8px;
+
+  &.compact {
+    padding: 0;
+    margin-bottom: 0;
+    min-width: 220px;
+    max-width: min(360px, 34vw);
+
+    .model-trigger {
+      height: 32px;
+      padding: 5px 10px;
+      border-radius: 999px;
+      background: rgba($accent-primary, 0.06);
+      border-color: rgba($accent-primary, 0.18);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+    }
+
+    .model-trigger:hover {
+      background: rgba($accent-primary, 0.1);
+      border-color: rgba($accent-primary, 0.32);
+    }
+
+    .model-name {
+      max-width: 220px;
+      font-size: 12px;
+    }
+  }
+}
+
+.model-prefix {
+  flex-shrink: 0;
+  font-size: 10px;
+  line-height: 1;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: $accent-primary;
+  opacity: 0.9;
 }
 
 .model-label {

@@ -12,6 +12,7 @@ import ChatInput from './ChatInput.vue'
 import ConversationMonitorPane from './ConversationMonitorPane.vue'
 import MessageList from './MessageList.vue'
 import SessionListItem from './SessionListItem.vue'
+import ModelSelector from '@/components/layout/ModelSelector.vue'
 
 const chatStore = useChatStore()
 const sessionBrowserPrefsStore = useSessionBrowserPrefsStore()
@@ -382,6 +383,7 @@ async function handleWorkspaceConfirm() {
           <span v-if="chatStore.activeSession?.workspace" class="workspace-badge" :title="chatStore.activeSession.workspace">📁 {{ chatStore.activeSession.workspace.split('/').pop() || chatStore.activeSession.workspace }}</span>
         </div>
         <div class="header-actions">
+          <ModelSelector v-if="currentMode === 'chat' && !isMobile" compact class="header-model-selector" />
           <!-- chat/live mode toggle hidden -->
           <template v-if="currentMode === 'chat'">
             <NTooltip trigger="hover">
@@ -734,8 +736,12 @@ async function handleWorkspaceConfirm() {
 .header-actions {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 8px;
   flex-shrink: 0;
+}
+
+.header-model-selector {
+  margin-right: 4px;
 }
 
 .chat-mode-toggle {
