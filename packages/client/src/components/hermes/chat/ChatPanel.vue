@@ -162,8 +162,12 @@ function handleNewChat() {
   chatStore.newChat()
 }
 
-function handleHeaderModelSelected(payload: { model: string; provider: string }) {
-  chatStore.switchSessionModel(payload.model, payload.provider)
+async function handleHeaderModelSelected(payload: { model: string; provider: string }) {
+  try {
+    await chatStore.switchSessionModel(payload.model, payload.provider)
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : '当前会话模型切换失败')
+  }
 }
 
 async function copySessionId(id?: string) {
@@ -387,7 +391,7 @@ async function handleWorkspaceConfirm() {
           <span v-if="chatStore.activeSession?.workspace" class="workspace-badge" :title="chatStore.activeSession.workspace">📁 {{ chatStore.activeSession.workspace.split('/').pop() || chatStore.activeSession.workspace }}</span>
         </div>
         <div class="header-actions">
-          <ModelSelector v-if="currentMode === 'chat' && !isMobile" compact :model-override="chatStore.activeSession?.model || ''" class="header-model-selector" @selected="handleHeaderModelSelected" />
+          <ModelSelector v-if="currentMode === 'chat' && !isMobile" compact :update-global="false" :model-override="chatStore.activeSession?.model || ''" :provider-override="chatStore.activeSession?.provider || ''" class="header-model-selector" @selected="handleHeaderModelSelected" />
           <!-- chat/live mode toggle hidden -->
           <template v-if="currentMode === 'chat'">
             <NTooltip trigger="hover">

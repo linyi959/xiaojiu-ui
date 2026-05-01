@@ -292,6 +292,45 @@ export async function usageSingle(ctx: any) {
   ctx.body = result
 }
 
+export async function setModel(ctx: any) {
+  const { model, provider } = ctx.request.body as { model?: string | null; provider?: string | null }
+  if (model !== undefined && model !== null && typeof model !== 'string') {
+    ctx.status = 400
+    ctx.body = { error: 'model must be a string or null' }
+    return
+  }
+  if (provider !== undefined && provider !== null && typeof provider !== 'string') {
+    ctx.status = 400
+    ctx.body = { error: 'provider must be a string or null' }
+    return
+  }
+
+  if (useLocalSessionStore()) {
+    const { updateSession, getSession, createSession } = await import('../../db/hermes/session-store')
+    const { getActiveProfileName } = await import('../../services/hermes/hermes-profile')
+    const id = ctx.params.id
+    const nextModel = typeof model === 'string' ? model.trim() : ''
+    const nextProvider = typeof provider === 'string' ? provider.trim() : ''
+
+    // Create session if it doesn't exist yet (user may choose a model before first message).
+    if (!getSession(id)) {
+      createSession({ id, profile: getActiveProfileName(), title: '', model: nextModel })
+    }
+    updateSession(id, {
+      model: nextModel,
+      billing_provider: nextProvider || null,
+      last_active: Math.floor(Date.now() / 1000),
+    } as any)
+    ctx.body = { ok: true, model: nextModel, provider: nextProvider || null }
+    return
+  }
+
+  // Native Hermes history sessions are read-only in this Web UI BFF. Keep the UI safe instead of
+  // pretending we persisted an override to Hermes' own state database.
+  ctx.status = 501
+  ctx.body = { error: 'Session model override is only supported for Web UI chat sessions' }
+}
+
 export async function rename(ctx: any) {
   if (useLocalSessionStore()) {
     const { title } = ctx.request.body as { title?: string }

@@ -1,5 +1,5 @@
 import { startRunViaSocket, resumeSession, registerSessionHandlers, unregisterSessionHandlers, type RunEvent } from '@/api/hermes/chat'
-import { deleteSession as deleteSessionApi, fetchSession, fetchSessions, fetchHermesSessions, fetchHermesSession, type HermesMessage, type SessionSummary } from '@/api/hermes/sessions'
+import { deleteSession as deleteSessionApi, fetchSession, fetchSessions, fetchHermesSessions, fetchHermesSession, setSessionModel as setSessionModelApi, type HermesMessage, type SessionSummary } from '@/api/hermes/sessions'
 import { getApiKey } from '@/api/client'
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
@@ -542,12 +542,21 @@ export const useChatStore = defineStore('chat', () => {
 
   async function switchSessionModel(modelId: string, provider?: string) {
     if (!activeSession.value) return
-    activeSession.value.model = modelId
-    activeSession.value.provider = provider || ''
-    // If provider changed, update global config too (Hermes requires it)
-    if (provider) {
-      const { useAppStore } = await import('./app')
-      await useAppStore().switchModel(modelId, provider)
+    const target = activeSession.value
+    const previousModel = target.model
+    const previousProvider = target.provider
+    const nextModel = modelId.trim()
+    const nextProvider = (provider || '').trim()
+
+    target.model = nextModel || undefined
+    target.provider = nextProvider
+
+    try {
+      await setSessionModelApi(target.id, nextModel, nextProvider || undefined)
+    } catch (error) {
+      target.model = previousModel
+      target.provider = previousProvider
+      throw error
     }
   }
 

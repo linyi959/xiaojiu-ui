@@ -8,9 +8,13 @@ const { t } = useI18n()
 const props = withDefaults(defineProps<{
   compact?: boolean
   modelOverride?: string
+  providerOverride?: string
+  updateGlobal?: boolean
 }>(), {
   compact: false,
   modelOverride: '',
+  providerOverride: '',
+  updateGlobal: true,
 })
 const emit = defineEmits<{
   selected: [payload: { model: string; provider: string }]
@@ -24,6 +28,8 @@ const customInput = ref('')
 const customProvider = ref('')
 
 const displayModel = computed(() => props.modelOverride || appStore.selectedModel)
+const activeModel = computed(() => props.modelOverride || appStore.selectedModel)
+const activeProvider = computed(() => props.providerOverride || appStore.selectedProvider)
 
 const providerOptions = computed(() => {
   const current = appStore.selectedProvider
@@ -71,7 +77,9 @@ function isGroupCollapsed(provider: string) {
 function handleSelect(model: string, provider: string) {
   const meta = appStore.modelGroups.find(g => g.provider === provider)?.model_meta?.[model]
   if (meta?.disabled) return
-  appStore.switchModel(model, provider)
+  if (props.updateGlobal) {
+    appStore.switchModel(model, provider)
+  }
   emit('selected', { model, provider })
   showModal.value = false
   searchQuery.value = ''
@@ -83,7 +91,9 @@ function handleCustomSubmit() {
   // 拦截 disabled 模型，避免 custom input 绕过列表里的灰显限制
   const meta = appStore.modelGroups.find(g => g.provider === customProvider.value)?.model_meta?.[model]
   if (meta?.disabled) return
-  appStore.switchModel(model, customProvider.value)
+  if (props.updateGlobal) {
+    appStore.switchModel(model, customProvider.value)
+  }
   emit('selected', { model, provider: customProvider.value })
   showModal.value = false
   searchQuery.value = ''
@@ -143,7 +153,7 @@ function openModal() {
               :key="model"
               class="model-item"
               :class="{
-                active: model === appStore.selectedModel && group.provider === appStore.selectedProvider,
+                active: model === activeModel && group.provider === activeProvider,
                 disabled: !!group.model_meta?.[model]?.disabled,
               }"
               :title="group.model_meta?.[model]?.disabled ? t('models.disabledTooltip') : ''"
@@ -153,7 +163,7 @@ function openModal() {
               <span v-if="group.model_meta?.[model]?.preview" class="model-badge-preview">{{ t('models.previewBadge') }}</span>
               <span v-if="group.model_meta?.[model]?.disabled" class="model-badge-disabled">{{ t('models.disabledBadge') }}</span>
               <span v-if="customModelSet.has(model)" class="model-badge-custom">{{ t('models.customBadge') }}</span>
-              <svg v-if="model === appStore.selectedModel && group.provider === appStore.selectedProvider" class="model-check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <svg v-if="model === activeModel && group.provider === activeProvider" class="model-check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                 <polyline points="20 6 9 17 4 12" />
               </svg>
             </div>

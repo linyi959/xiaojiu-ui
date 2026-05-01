@@ -120,6 +120,13 @@ export async function renameSession(id: string, title: string): Promise<boolean>
   }
 }
 
+export async function setSessionModel(id: string, model: string, provider?: string): Promise<{ ok: boolean; model?: string; provider?: string | null }> {
+  return request(`/api/hermes/sessions/${id}/model`, {
+    method: 'POST',
+    body: JSON.stringify({ model, provider: provider || null }),
+  })
+}
+
 export async function setSessionWorkspace(id: string, workspace: string | null): Promise<boolean> {
   try {
     await request(`/api/hermes/sessions/${id}/workspace`, {
