@@ -7,9 +7,14 @@ import { useI18n } from 'vue-i18n'
 const { t } = useI18n()
 const props = withDefaults(defineProps<{
   compact?: boolean
+  modelOverride?: string
 }>(), {
   compact: false,
+  modelOverride: '',
 })
+const emit = defineEmits<{
+  selected: [payload: { model: string; provider: string }]
+}>()
 const appStore = useAppStore()
 
 const showModal = ref(false)
@@ -17,6 +22,8 @@ const searchQuery = ref('')
 const collapsedGroups = ref<Record<string, boolean>>({})
 const customInput = ref('')
 const customProvider = ref('')
+
+const displayModel = computed(() => props.modelOverride || appStore.selectedModel)
 
 const providerOptions = computed(() => {
   const current = appStore.selectedProvider
@@ -65,6 +72,7 @@ function handleSelect(model: string, provider: string) {
   const meta = appStore.modelGroups.find(g => g.provider === provider)?.model_meta?.[model]
   if (meta?.disabled) return
   appStore.switchModel(model, provider)
+  emit('selected', { model, provider })
   showModal.value = false
   searchQuery.value = ''
 }
@@ -76,6 +84,7 @@ function handleCustomSubmit() {
   const meta = appStore.modelGroups.find(g => g.provider === customProvider.value)?.model_meta?.[model]
   if (meta?.disabled) return
   appStore.switchModel(model, customProvider.value)
+  emit('selected', { model, provider: customProvider.value })
   showModal.value = false
   searchQuery.value = ''
   customInput.value = ''
@@ -94,8 +103,8 @@ function openModal() {
   <div class="model-selector" :class="{ compact: props.compact }">
     <div v-if="!props.compact" class="model-label">{{ t('models.title') }}</div>
     <button class="model-trigger" @click="openModal">
-      <span v-if="props.compact" class="model-prefix">Model</span>
-      <span class="model-name" :title="appStore.selectedModel">{{ appStore.selectedModel || '—' }}</span>
+      <span v-if="props.compact" class="model-prefix">模型</span>
+      <span class="model-name" :title="displayModel">{{ displayModel || '—' }}</span>
       <svg class="model-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <polyline points="6 9 12 15 18 9" />
       </svg>

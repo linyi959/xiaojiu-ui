@@ -162,6 +162,10 @@ function handleNewChat() {
   chatStore.newChat()
 }
 
+function handleHeaderModelSelected(payload: { model: string; provider: string }) {
+  chatStore.switchSessionModel(payload.model, payload.provider)
+}
+
 async function copySessionId(id?: string) {
   const sessionId = id || chatStore.activeSessionId
   if (sessionId) {
@@ -383,7 +387,7 @@ async function handleWorkspaceConfirm() {
           <span v-if="chatStore.activeSession?.workspace" class="workspace-badge" :title="chatStore.activeSession.workspace">📁 {{ chatStore.activeSession.workspace.split('/').pop() || chatStore.activeSession.workspace }}</span>
         </div>
         <div class="header-actions">
-          <ModelSelector v-if="currentMode === 'chat' && !isMobile" compact class="header-model-selector" />
+          <ModelSelector v-if="currentMode === 'chat' && !isMobile" compact :model-override="chatStore.activeSession?.model || ''" class="header-model-selector" @selected="handleHeaderModelSelected" />
           <!-- chat/live mode toggle hidden -->
           <template v-if="currentMode === 'chat'">
             <NTooltip trigger="hover">
