@@ -1,5 +1,5 @@
 import { startRunViaSocket, resumeSession, registerSessionHandlers, unregisterSessionHandlers, type RunEvent } from '@/api/hermes/chat'
-import { deleteSession as deleteSessionApi, fetchSession, fetchSessions, type HermesMessage, type SessionSummary } from '@/api/hermes/sessions'
+import { deleteSession as deleteSessionApi, fetchSession, fetchSessions, fetchHermesSessions, fetchHermesSession, type HermesMessage, type SessionSummary } from '@/api/hermes/sessions'
 import { getApiKey } from '@/api/client'
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
@@ -352,7 +352,18 @@ export const useChatStore = defineStore('chat', () => {
   async function loadSessions() {
     isLoadingSessions.value = true
     try {
-      const list = await fetchSessions()
+      const [apiSessions, hermesHistorySessions] = await Promise.all([
+        fetchSessions(),
+        fetchHermesSessions(),
+      ])
+      const mergedById = new Map<string, SessionSummary>()
+      for (const item of [...apiSessions, ...hermesHistorySessions]) {
+        mergedById.set(item.id, item)
+      }
+      const list = [...mergedById.values()].sort((a, b) =>
+        (b.last_active || b.ended_at || b.started_at || 0) -
+        (a.last_active || a.ended_at || a.started_at || 0)
+      )
       const fresh = list.map(mapHermesSession)
       const freshIds = new Set(fresh.map(s => s.id))
       // Preserve already-loaded messages for sessions that are still present,
@@ -488,8 +499,31 @@ export const useChatStore = defineStore('chat', () => {
           resolve()
         })
       })
+
+      if (activeSession.value && activeSession.value.messages.length === 0 && activeSession.value.source !== 'api_server') {
+        const detail = await fetchHermesSession(sessionId)
+        if (detail) {
+          activeSession.value.messages = mapHermesMessages(detail.messages || [])
+          if (detail.title) activeSession.value.title = detail.title
+          if (detail.input_tokens != null) activeSession.value.inputTokens = detail.input_tokens
+          if (detail.output_tokens != null) activeSession.value.outputTokens = detail.output_tokens
+        }
+      }
     } catch (err) {
       console.error('Failed to load session messages via resume:', err)
+      if (activeSession.value?.source !== 'api_server') {
+        try {
+          const detail = await fetchHermesSession(sessionId)
+          if (detail && activeSession.value) {
+            activeSession.value.messages = mapHermesMessages(detail.messages || [])
+            if (detail.title) activeSession.value.title = detail.title
+            if (detail.input_tokens != null) activeSession.value.inputTokens = detail.input_tokens
+            if (detail.output_tokens != null) activeSession.value.outputTokens = detail.output_tokens
+          }
+        } catch (historyErr) {
+          console.error('Failed to load Hermes history session:', historyErr)
+        }
+      }
     } finally {
       isLoadingMessages.value = false
     }
