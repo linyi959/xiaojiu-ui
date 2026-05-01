@@ -1,39 +1,106 @@
 <script setup lang="ts">
-import { renameSession, setSessionWorkspace } from '@/api/hermes/sessions'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useChatStore, type Session } from '@/stores/hermes/chat'
+import { useAppStore } from '@/stores/hermes/app'
+import { useProfilesStore } from '@/stores/hermes/profiles'
 import { useSessionBrowserPrefsStore } from '@/stores/hermes/session-browser-prefs'
 import { NButton, NDropdown, NInput, NModal, NTooltip, useMessage } from 'naive-ui'
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getSourceLabel } from '@/shared/session-display'
 import { copyToClipboard } from '@/utils/clipboard'
-import FolderPicker from './FolderPicker.vue'
-import ChatInput from './ChatInput.vue'
-import ConversationMonitorPane from './ConversationMonitorPane.vue'
-import MessageList from './MessageList.vue'
-import SessionListItem from './SessionListItem.vue'
+import FolderPicker from '@/components/hermes/chat/FolderPicker.vue'
+import HistoryMessageList from '@/components/hermes/chat/HistoryMessageList.vue'
+import SessionListItem from '@/components/hermes/chat/SessionListItem.vue'
+import { renameSession, setSessionWorkspace, fetchHermesSessions, fetchHermesSession, type SessionSummary } from '@/api/hermes/sessions'
 
 const chatStore = useChatStore()
+const appStore = useAppStore()
+const profilesStore = useProfilesStore()
 const sessionBrowserPrefsStore = useSessionBrowserPrefsStore()
 const message = useMessage()
 const { t } = useI18n()
 
-const currentMode = ref<'chat' | 'live'>('chat')
+// Hermes history sessions (exclude api_server)
+const hermesSessions = ref<SessionSummary[]>([])
+const hermesSessionsLoading = ref(false)
+const hermesSessionsLoaded = ref(false)
+// History page's own selected session (independent from chatStore)
+const historySessionId = ref<string | null>(null)
+const historySession = ref<Session | null>(null)
+
+async function loadHermesSessions() {
+  if (hermesSessionsLoading.value) return
+  hermesSessionsLoading.value = true
+  try {
+    hermesSessions.value = await fetchHermesSessions()
+    hermesSessionsLoaded.value = true
+  } catch (err) {
+    console.error('Failed to load Hermes sessions:', err)
+  } finally {
+    hermesSessionsLoading.value = false
+  }
+}
 
 // Initialize synchronously from the media query so first paint is correct.
-// On narrow viewports the session list is an absolute-positioned overlay
-// (z-index 10) on top of the chat area; if we default to `true`, onMounted
-// only flips it to `false` AFTER the first render, causing a visible flash
-// where the session list covers the chat content ("auto-fixes after a
-// moment" — that was the race).
 const showSessions = ref(
   typeof window === 'undefined' || !window.matchMedia('(max-width: 768px)').matches,
 )
 let mobileQuery: MediaQueryList | null = null
 const isMobile = ref(false)
 
-function handleSessionClick(sessionId: string) {
-  chatStore.switchSession(sessionId)
+async function handleSessionClick(sessionId: string) {
+  // First, fetch the Hermes session detail
+  const sessionDetail = await fetchHermesSession(sessionId)
+  if (!sessionDetail) {
+    message.error(t('chat.sessionNotFound'))
+    return
+  }
+
+  // Convert SessionDetail to Session format and add to chatStore
+  const sessionData: Session = {
+    id: sessionDetail.id,
+    title: sessionDetail.title || '',
+    source: sessionDetail.source,
+    createdAt: sessionDetail.started_at * 1000,
+    updatedAt: (sessionDetail.last_active || sessionDetail.started_at) * 1000,
+    model: sessionDetail.model,
+    messageCount: sessionDetail.message_count,
+    inputTokens: sessionDetail.input_tokens,
+    outputTokens: sessionDetail.output_tokens,
+    endedAt: sessionDetail.ended_at ? sessionDetail.ended_at * 1000 : undefined,
+    lastActiveAt: sessionDetail.last_active ? sessionDetail.last_active * 1000 : undefined,
+    workspace: sessionDetail.workspace || undefined,
+    messages: sessionDetail.messages.map(m => {
+      const msg: any = {
+        id: String(m.id),
+        sessionId: m.session_id,
+        role: m.role,
+        content: m.content || '',
+        timestamp: m.timestamp * 1000,
+      }
+
+      // Preserve tool-related fields
+      if (m.role === 'tool') {
+        msg.toolName = m.tool_name
+        msg.toolArgs = m.tool_calls?.[0]?.function?.arguments
+          ? JSON.stringify(m.tool_calls[0].function.arguments)
+          : undefined
+        msg.toolStatus = 'done'
+      }
+
+      // Preserve reasoning field
+      if (m.reasoning) {
+        msg.reasoning = m.reasoning
+      }
+
+      return msg
+    }),
+  }
+
+  // Set history page's own session state (independent from chatStore)
+  historySessionId.value = sessionData.id
+  historySession.value = sessionData
+
   if (mobileQuery?.matches) showSessions.value = false
 }
 
@@ -44,7 +111,11 @@ function handleMobileChange(e: MediaQueryListEvent | MediaQueryList) {
   }
 }
 
-onMounted(() => {
+onMounted(async () => {
+  appStore.loadModels()
+  await profilesStore.fetchProfiles()
+  await loadHermesSessions()
+
   mobileQuery = window.matchMedia('(max-width: 768px)')
   handleMobileChange(mobileQuery)
   mobileQuery.addEventListener('change', handleMobileChange)
@@ -53,11 +124,36 @@ onMounted(() => {
 onUnmounted(() => {
   mobileQuery?.removeEventListener('change', handleMobileChange)
 })
+
 const showRenameModal = ref(false)
 const renameValue = ref('')
 const renameSessionId = ref<string | null>(null)
 const renameInputRef = ref<InstanceType<typeof NInput> | null>(null)
 const collapsedGroups = ref<Set<string>>(new Set(JSON.parse(localStorage.getItem('hermes_collapsed_groups') || '[]')))
+
+// Convert SessionSummary to Session format
+function sessionSummaryToSession(summary: SessionSummary): Session {
+  return {
+    id: summary.id,
+    title: summary.title || '',
+    source: summary.source,
+    createdAt: summary.started_at * 1000,
+    updatedAt: (summary.last_active || summary.started_at) * 1000,
+    model: summary.model,
+    messageCount: summary.message_count,
+    inputTokens: summary.input_tokens,
+    outputTokens: summary.output_tokens,
+    endedAt: summary.ended_at ? summary.ended_at * 1000 : undefined,
+    lastActiveAt: summary.last_active ? summary.last_active * 1000 : undefined,
+    workspace: summary.workspace || undefined,
+    messages: [],
+  }
+}
+
+// Computed sessions from Hermes API
+const historySessions = computed<Session[]>(() =>
+  hermesSessions.value.map(sessionSummaryToSession)
+)
 
 // Source sort order: api_server first, cron last, others alphabetical
 function sourceSortKey(source: string): number {
@@ -80,12 +176,12 @@ interface SessionGroup {
 }
 
 const pinnedSessions = computed(() =>
-  sortSessionsWithActiveFirst(chatStore.sessions.filter(session => sessionBrowserPrefsStore.isPinned(session.id))),
+  sortSessionsWithActiveFirst(historySessions.value.filter(session => sessionBrowserPrefsStore.isPinned(session.id))),
 )
 
 const groupedSessions = computed<SessionGroup[]>(() => {
   const map = new Map<string, Session[]>()
-  for (const s of chatStore.sessions) {
+  for (const s of historySessions.value) {
     if (sessionBrowserPrefsStore.isPinned(s.id)) continue
     const key = s.source || ''
     if (!map.has(key)) map.set(key, [])
@@ -116,7 +212,8 @@ function toggleGroup(source: string) {
     )
     const group = groupedSessions.value.find(g => g.source === source)
     if (group?.sessions.length) {
-      chatStore.switchSession(group.sessions[0].id)
+      // Auto-select and load first session when expanding group
+      handleSessionClick(group.sessions[0].id)
     }
   }
   localStorage.setItem('hermes_collapsed_groups', JSON.stringify([...collapsedGroups.value]))
@@ -131,49 +228,48 @@ watch(groupedSessions, groups => {
     }
     return
   }
-  collapsedGroups.value = new Set(groups.slice(1).map(group => group.source))
-  localStorage.setItem('hermes_collapsed_groups', JSON.stringify([...collapsedGroups.value]))
+  // Default: collapse all groups except the first one
+  if (groups.length > 0) {
+    collapsedGroups.value = new Set(groups.slice(1).map(group => group.source))
+    localStorage.setItem('hermes_collapsed_groups', JSON.stringify([...collapsedGroups.value]))
+  }
 }, { once: true })
 
-watch(
-  () => [chatStore.sessionsLoaded, ...chatStore.sessions.map(session => session.id)],
-  value => {
-    const sessionIds = value.slice(1) as string[]
-    if (!value[0] || sessionIds.length === 0) return
-    sessionBrowserPrefsStore.pruneMissingSessions(sessionIds)
-  },
-  { immediate: true },
-)
+// Auto-load first CLI session when Hermes sessions are loaded
+watch(hermesSessionsLoaded, (loaded) => {
+  if (loaded && hermesSessions.value.length > 0) {
+    // Only auto-load if no session is currently active
+    if (!historySessionId.value || !hermesSessions.value.find(s => s.id === historySessionId.value)) {
+      // Find first CLI session
+      const firstCliSession = hermesSessions.value.find(s => s.source === 'cli')
+      if (firstCliSession) {
+        // Ensure the CLI group is expanded
+        if (collapsedGroups.value.has('cli')) {
+          collapsedGroups.value = new Set([...collapsedGroups.value].filter(s => s !== 'cli'))
+        }
+        // Load session details
+        handleSessionClick(firstCliSession.id)
+      }
+      // If no CLI session exists, don't auto-load any session
+    }
+  }
+}, { once: true })
 
 const activeSessionTitle = computed(() =>
-  chatStore.activeSession?.title || t('chat.newChat'),
-)
-
-const headerTitle = computed(() =>
-  currentMode.value === 'live' ? t('chat.liveSessions') : activeSessionTitle.value,
+  historySession.value?.title || t('chat.newChat'),
 )
 
 const activeSessionSource = computed(() =>
-  currentMode.value === 'chat' ? (chatStore.activeSession?.source || '') : '',
+  historySession.value?.source || '',
 )
 
-function handleNewChat() {
-  chatStore.newChat()
-}
-
 async function copySessionId(id?: string) {
-  const sessionId = id || chatStore.activeSessionId
+  const sessionId = id || historySessionId.value
   if (sessionId) {
     const ok = await copyToClipboard(sessionId)
     if (ok) message.success(t('common.copied'))
     else message.error(t('common.copied') + ' ✗')
   }
-}
-
-function handleDeleteSession(id: string) {
-  sessionBrowserPrefsStore.removePinned(id)
-  chatStore.deleteSession(id)
-  message.success(t('chat.sessionDeleted'))
 }
 
 const contextSessionId = ref<string | null>(null)
@@ -210,12 +306,12 @@ function handleContextMenuSelect(key: string) {
   if (key === 'copy-id') {
     copySessionId(contextSessionId.value)
   } else if (key === 'workspace') {
-    const session = chatStore.sessions.find(s => s.id === contextSessionId.value)
+    const session = historySessions.value.find(s => s.id === contextSessionId.value)
     workspaceSessionId.value = contextSessionId.value
     workspaceValue.value = session?.workspace || ''
     showWorkspaceModal.value = true
   } else if (key === 'rename') {
-    const session = chatStore.sessions.find(s => s.id === contextSessionId.value)
+    const session = historySessions.value.find(s => s.id === contextSessionId.value)
     renameSessionId.value = contextSessionId.value
     renameValue.value = session?.title || ''
     showRenameModal.value = true
@@ -233,11 +329,8 @@ async function handleRenameConfirm() {
   if (!renameSessionId.value || !renameValue.value.trim()) return
   const ok = await renameSession(renameSessionId.value, renameValue.value.trim())
   if (ok) {
-    const session = chatStore.sessions.find(s => s.id === renameSessionId.value)
-    if (session) session.title = renameValue.value.trim()
-    if (chatStore.activeSession?.id === renameSessionId.value) {
-      chatStore.activeSession.title = renameValue.value.trim()
-    }
+    // Reload Hermes sessions to get updated title
+    await loadHermesSessions()
     message.success(t('chat.renamed'))
   } else {
     message.error(t('chat.renameFailed'))
@@ -253,11 +346,8 @@ async function handleWorkspaceConfirm() {
   if (!workspaceSessionId.value) return
   const ok = await setSessionWorkspace(workspaceSessionId.value, workspaceValue.value || null)
   if (ok) {
-    const session = chatStore.sessions.find(s => s.id === workspaceSessionId.value)
-    if (session) session.workspace = workspaceValue.value || null
-    if (chatStore.activeSession?.id === workspaceSessionId.value) {
-      chatStore.activeSession.workspace = workspaceValue.value || null
-    }
+    // Reload Hermes sessions to get updated workspace
+    await loadHermesSessions()
     message.success(t('chat.workspaceSet'))
   } else {
     message.error(t('chat.workspaceSetFailed'))
@@ -267,25 +357,20 @@ async function handleWorkspaceConfirm() {
 </script>
 
 <template>
-  <div class="chat-panel">
-    <div v-if="currentMode === 'chat'" class="session-backdrop" :class="{ active: showSessions }" @click="showSessions = false" />
-    <aside v-if="currentMode === 'chat'" class="session-list" :class="{ collapsed: !showSessions }">
+  <div class="history-panel">
+    <div class="session-backdrop" :class="{ active: showSessions }" @click="showSessions = false" />
+    <aside class="session-list" :class="{ collapsed: !showSessions }">
       <div class="session-list-header">
         <span v-if="showSessions" class="session-list-title">{{ t('chat.sessions') }}</span>
         <div class="session-list-actions">
           <button class="session-close-btn" @click="showSessions = false">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
           </button>
-          <NButton quaternary size="tiny" @click="handleNewChat" circle>
-            <template #icon>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-            </template>
-          </NButton>
         </div>
       </div>
       <div v-if="showSessions" class="session-items">
-        <div v-if="chatStore.isLoadingSessions && chatStore.sessions.length === 0" class="session-loading">{{ t('common.loading') }}</div>
-        <div v-else-if="chatStore.sessions.length === 0" class="session-empty">{{ t('chat.noSessions') }}</div>
+        <div v-if="hermesSessionsLoading && hermesSessions.length === 0" class="session-loading">{{ t('common.loading') }}</div>
+        <div v-else-if="hermesSessions.length === 0" class="session-empty">{{ t('chat.noSessions') }}</div>
 
         <template v-if="pinnedSessions.length > 0">
           <div class="session-group-header session-group-header--static">
@@ -296,13 +381,12 @@ async function handleWorkspaceConfirm() {
             v-for="s in pinnedSessions"
             :key="`pinned-${s.id}`"
             :session="s"
-            :active="s.id === chatStore.activeSessionId"
+            :active="s.id === historySessionId"
             :pinned="true"
-            :can-delete="s.id !== chatStore.activeSessionId || chatStore.sessions.length > 1"
-            :streaming="chatStore.isSessionLive(s.id)"
+            :can-delete="false"
+            :streaming="false"
             @select="handleSessionClick(s.id)"
             @contextmenu="handleContextMenu($event, s.id)"
-            @delete="handleDeleteSession(s.id)"
           />
         </template>
 
@@ -317,13 +401,12 @@ async function handleWorkspaceConfirm() {
               v-for="s in group.sessions"
               :key="s.id"
               :session="s"
-              :active="s.id === chatStore.activeSessionId"
+              :active="s.id === historySessionId"
               :pinned="false"
-              :can-delete="s.id !== chatStore.activeSessionId || chatStore.sessions.length > 1"
-              :streaming="chatStore.isSessionLive(s.id)"
+              :can-delete="false"
+              :streaming="false"
               @select="handleSessionClick(s.id)"
               @contextmenu="handleContextMenu($event, s.id)"
-              @delete="handleDeleteSession(s.id)"
             />
           </template>
         </template>
@@ -372,43 +455,30 @@ async function handleWorkspaceConfirm() {
     <div class="chat-main">
       <header class="chat-header">
         <div class="header-left">
-          <NButton v-if="currentMode === 'chat'" quaternary size="small" @click="showSessions = !showSessions" circle>
+          <NButton quaternary size="small" @click="showSessions = !showSessions" circle>
             <template #icon>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
             </template>
           </NButton>
-          <span class="header-session-title">{{ headerTitle }}</span>
+          <span class="header-session-title">{{ activeSessionTitle }}</span>
           <span v-if="activeSessionSource" class="source-badge">{{ getSourceLabel(activeSessionSource) }}</span>
-          <span v-if="chatStore.activeSession?.workspace" class="workspace-badge" :title="chatStore.activeSession.workspace">📁 {{ chatStore.activeSession.workspace.split('/').pop() || chatStore.activeSession.workspace }}</span>
+          <span v-if="historySession?.workspace" class="workspace-badge" :title="historySession.workspace">📁 {{ historySession.workspace.split('/').pop() || historySession.workspace }}</span>
         </div>
         <div class="header-actions">
-          <!-- chat/live mode toggle hidden -->
-          <template v-if="currentMode === 'chat'">
-            <NTooltip trigger="hover">
-              <template #trigger>
-                <NButton quaternary size="small" @click="copySessionId()" circle>
-                  <template #icon>
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-                  </template>
-                </NButton>
-              </template>
-              {{ t('chat.copySessionId') }}
-            </NTooltip>
-            <NButton size="small" :circle="isMobile" @click="handleNewChat">
-              <template #icon>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-              </template>
-              <template v-if="!isMobile">{{ t('chat.newChat') }}</template>
-            </NButton>
-          </template>
+          <NTooltip trigger="hover">
+            <template #trigger>
+              <NButton quaternary size="small" @click="copySessionId()" circle>
+                <template #icon>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                </template>
+              </NButton>
+            </template>
+            {{ t('chat.copySessionId') }}
+          </NTooltip>
         </div>
       </header>
 
-      <template v-if="currentMode === 'chat'">
-        <MessageList />
-        <ChatInput />
-      </template>
-      <ConversationMonitorPane v-else :human-only="sessionBrowserPrefsStore.humanOnly" />
+      <HistoryMessageList :session="historySession" />
     </div>
   </div>
 </template>
@@ -416,7 +486,7 @@ async function handleWorkspaceConfirm() {
 <style scoped lang="scss">
 @use '@/styles/variables' as *;
 
-.chat-panel {
+.history-panel {
   display: flex;
   height: 100%;
   position: relative;
@@ -736,13 +806,6 @@ async function handleWorkspaceConfirm() {
   align-items: center;
   gap: 4px;
   flex-shrink: 0;
-}
-
-.chat-mode-toggle {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  margin-right: 4px;
 }
 
 @media (max-width: $breakpoint-mobile) {

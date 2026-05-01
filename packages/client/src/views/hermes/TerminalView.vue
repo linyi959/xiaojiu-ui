@@ -282,7 +282,7 @@ function buildWsUrl(): string {
 
   // Dev mode: connect directly to backend port; Production: same host
   const host = import.meta.env.DEV
-    ? `${location.hostname}:9599`
+    ? `${location.hostname}:8648`
     : location.host;
   return `${wsProtocol}//${host}/api/hermes/terminal${token ? `?token=${encodeURIComponent(token)}` : ""}`;
 }

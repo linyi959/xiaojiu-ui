@@ -59,7 +59,7 @@ export async function handleUpdate(ctx: any) {
     const output = runUpdateInstall()
     ctx.body = { success: true, message: output.trim() }
     setTimeout(() => {
-      spawnRestart(process.env.PORT || '9599').unref()
+      spawnRestart(process.env.PORT || '8648').unref()
       process.exit(0)
     }, 2000)
   } catch (err: any) {

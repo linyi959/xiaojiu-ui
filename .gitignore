@@ -31,5 +31,4 @@ hermes-dependencies.md
 *.sln
 *.sw?
 .superpowers/
-
 hermes-web-ui-main/

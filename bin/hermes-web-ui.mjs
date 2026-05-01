@@ -15,7 +15,7 @@ const PID_DIR = resolve(homedir(), '.hermes-web-ui')
 const PID_FILE = join(PID_DIR, 'server.pid')
 const LOG_FILE = join(PID_DIR, 'server.log')
 const TOKEN_FILE = join(PID_DIR, '.token')
-const DEFAULT_PORT = 9599
+const DEFAULT_PORT = 8648
 
 // ─── Auto-fix node-pty native module ──────────────────────────
 function ensureNativeModules() {

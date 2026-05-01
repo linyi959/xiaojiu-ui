@@ -26,7 +26,7 @@ function createMockCtx(overrides: Record<string, any> = {}) {
   const ctx: any = {
     path: '/api/hermes/jobs',
     method: 'GET',
-    headers: { host: 'localhost:9599', 'content-type': 'application/json' },
+    headers: { host: 'localhost:8648', 'content-type': 'application/json' },
     query: {},
     search: '',
     req: { method: 'GET' },
@@ -116,7 +116,7 @@ describe('Proxy Handler', () => {
     })
 
     const ctx = createMockCtx({
-      headers: { host: 'localhost:9599', authorization: 'Bearer web-ui-token' },
+      headers: { host: 'localhost:8648', authorization: 'Bearer web-ui-token' },
     })
     await proxy(ctx)
 

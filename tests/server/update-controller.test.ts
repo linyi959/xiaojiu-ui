@@ -91,7 +91,7 @@ describe('update controller', () => {
 
     expect(mocks.spawn).toHaveBeenCalledWith(
       expect.any(String),
-      ['restart', '--port', '9599'],
+      ['restart', '--port', '8648'],
       expect.objectContaining({ detached: true, stdio: 'ignore', windowsHide: true }),
     )
   })
