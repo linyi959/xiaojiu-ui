@@ -18,7 +18,7 @@ function formatCost(n: number): string {
 }
 
 const maxTokens = computed(() =>
-  Math.max(...usageStore.dailyUsage.map(d => d.tokens), 1),
+  Math.max(...usageStore.dailyUsage.map(d => d.input_tokens + d.output_tokens), 1),
 )
 </script>
 
@@ -39,13 +39,13 @@ import { computed } from 'vue'
         <div class="bar-track">
           <div
             class="bar-fill"
-            :style="{ height: (d.tokens / maxTokens * 100) + '%' }"
+            :style="{ height: (d.input_tokens + d.output_tokens) / maxTokens * 100 + '%' }"
           />
         </div>
         <div class="bar-tooltip">
           <div class="tooltip-date">{{ d.date }}</div>
-          <div class="tooltip-row">{{ t('usage.tokens') }}: {{ formatTokens(d.tokens) }}</div>
-          <div class="tooltip-row">{{ t('usage.cache') }}: {{ formatTokens(d.cache) }}</div>
+          <div class="tooltip-row">{{ t('usage.tokens') }}: {{ formatTokens(d.input_tokens + d.output_tokens) }}</div>
+          <div class="tooltip-row">{{ t('usage.cache') }}: {{ formatTokens(d.cache_read_tokens) }}</div>
           <div class="tooltip-row">{{ t('usage.sessions') }}: {{ d.sessions }}</div>
           <div class="tooltip-row">{{ t('usage.cost') }}: {{ formatCost(d.cost) }}</div>
         </div>
@@ -70,8 +70,8 @@ import { computed } from 'vue'
         <tbody>
           <tr v-for="d in [...usageStore.dailyUsage].reverse().slice(0, 30)" :key="d.date">
             <td>{{ d.date }}</td>
-            <td>{{ formatTokens(d.tokens) }}</td>
-            <td>{{ formatTokens(d.cache) }}</td>
+            <td>{{ formatTokens(d.input_tokens + d.output_tokens) }}</td>
+            <td>{{ formatTokens(d.cache_read_tokens) }}</td>
             <td>{{ d.sessions }}</td>
             <td>{{ formatCost(d.cost) }}</td>
           </tr>

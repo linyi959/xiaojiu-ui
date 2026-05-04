@@ -1,7 +1,7 @@
 export default {
   // 登录
   login: {
-    title: 'Hermes Web UI',
+    title: '小九中枢',
     description: '输入访问令牌以继续。令牌在服务端启动日志中查看。',
     placeholder: '访问令牌',
     submit: '登录',
@@ -77,6 +77,7 @@ export default {
     skills: '技能',
     memory: '记忆',
     logs: '日志',
+    monitor: '监控台',
     usage: '用量',
     channels: '频道',
     gateways: '网关',
@@ -108,7 +109,7 @@ export default {
   // 对话
   chat: {
     contextRemaining: '剩余',
-    emptyState: '开始与 Hermes Agent 对话',
+    emptyState: '开始与小九中枢对话',
     inputPlaceholder: '输入消息... (Enter 发送，Shift+Enter 换行)',
     attachFiles: '添加附件',
     stop: '停止',
@@ -733,6 +734,15 @@ export default {
     invalidPath: '无效的文件路径',
     download: '下载',
     downloadFile: '下载文件',
+  },
+
+  monitor: {
+    title: '中枢监控',
+    subtitle: '把模型、任务、记忆、技能和运行链路先挂到同一个主舞台里。框架先立起来，后面每个子系统再一点点接真实细节。',
+    refresh: '刷新监控',
+    coreMatrix: '核心链路矩阵',
+    presence: '小九在场状态',
+    telemetry: '运行遥测',
   },
 
   // 更新日志

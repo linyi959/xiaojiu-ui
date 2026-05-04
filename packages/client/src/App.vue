@@ -1,14 +1,15 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, computed, ref, watch } from 'vue'
+import { onMounted, onUnmounted, computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { darkTheme, NConfigProvider, NMessageProvider, NDialogProvider, NNotificationProvider } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { getThemeOverrides } from '@/styles/theme'
 import { useTheme } from '@/composables/useTheme'
-import AppSidebar from '@/components/layout/AppSidebar.vue'
 import { useKeyboard } from '@/composables/useKeyboard'
 import { useAppStore } from '@/stores/hermes/app'
 import SessionSearchModal from '@/components/hermes/chat/SessionSearchModal.vue'
+import CommandRoomShell from '@/components/command-room/CommandRoomShell.vue'
+import CommandPalette from '@/components/command-room/CommandPalette.vue'
 
 const { isDark } = useTheme()
 const { t } = useI18n()
@@ -28,12 +29,6 @@ const nodeVersionLow = computed(() => {
   return !isNaN(major) && major < 23
 })
 
-// Close mobile sidebar on route change
-watch(() => route.path, () => {
-  appStore.closeSidebar()
-})
-
-// Wait for router to resolve before rendering layout
 router.isReady().then(() => {
   ready.value = true
 })
@@ -61,16 +56,17 @@ useKeyboard()
             {{ t('sidebar.nodeVersionWarning', { version: appStore.nodeVersion }) }}
           </div>
           <div v-if="ready" class="app-layout" :class="{ 'no-sidebar': isLoginPage }">
-            <button v-if="!isLoginPage" class="hamburger-btn" @click="appStore.toggleSidebar">
-              <img src="/logo.png" alt="Menu" style="width: 24px; height: 24px;" />
-            </button>
-            <div v-if="!isLoginPage && appStore.sidebarOpen" class="mobile-backdrop" @click="appStore.closeSidebar" />
-            <AppSidebar v-if="!isLoginPage" />
-            <main class="app-main">
+            <template v-if="!isLoginPage">
+              <CommandRoomShell>
+                <router-view />
+              </CommandRoomShell>
+            </template>
+            <main v-else class="app-main login-main">
               <router-view />
             </main>
           </div>
           <SessionSearchModal />
+          <CommandPalette />
         </NNotificationProvider>
       </NDialogProvider>
     </NMessageProvider>
@@ -81,24 +77,17 @@ useKeyboard()
 @use '@/styles/variables' as *;
 
 .app-layout {
-  display: flex;
-  height: calc(100 * var(--vh));
   width: 100vw;
+  height: calc(100 * var(--vh));
   overflow: hidden;
-
-  &.no-sidebar {
-    display: block;
-  }
+  background:
+    radial-gradient(circle at 18% 0%, rgba(99, 231, 255, 0.07), transparent 28%),
+    linear-gradient(135deg, #02040b 0%, #07101f 52%, #02040b 100%);
 }
 
-.app-main {
-  flex: 1;
-  overflow-y: auto;
-  background-color: $bg-primary;
-
-  .no-sidebar & {
-    height: calc(100 * var(--vh));
-  }
+.login-main {
+  width: 100%;
+  height: 100%;
 }
 
 .node-warning-bar {

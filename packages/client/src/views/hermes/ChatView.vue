@@ -25,7 +25,8 @@ onMounted(async () => {
 
 <style scoped lang="scss">
 .chat-view {
-  height: calc(100 * var(--vh));
+  height: 100%;
+  min-height: 0;
   display: flex;
   flex-direction: column;
 }

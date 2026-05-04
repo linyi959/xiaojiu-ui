@@ -27,7 +27,11 @@ function formatToolDuration(seconds: number): string {
 }
 
 const displayMessages = computed(() =>
-  chatStore.messages.filter((m) => m.role !== "tool"),
+  chatStore.messages.filter((m) => {
+    if (m.role === 'tool') return !!m.toolName;
+    if (!m.content?.trim() && !m.reasoning?.trim()) return false;
+    return true;
+  }),
 );
 
 const currentToolCalls = computed(() => {
@@ -268,8 +272,14 @@ watch(currentToolCalls, () => {
   padding: 20px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 8px;
   background-color: $bg-card;
+
+  // tool 卡片间距单独收紧
+  .message.tool {
+    gap: 0;
+    margin: 1px 0;
+  }
 
   .dark & {
     background-color: #333333;

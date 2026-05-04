@@ -77,6 +77,7 @@ export default {
     skills: 'Skills',
     memory: 'Memory',
     logs: 'Logs',
+    monitor: 'Monitor',
     usage: 'Usage',
     channels: 'Channels',
     gateways: 'Gateways',
@@ -731,6 +732,15 @@ export default {
     invalidPath: 'Invalid file path',
     download: 'Download',
     downloadFile: 'Download file',
+  },
+
+  monitor: {
+    title: 'Command Monitor',
+    subtitle: 'A first central stage for model, jobs, memory, skills, and runtime status. The framework lands first; deeper live subsystems can be wired in step by step.',
+    refresh: 'Refresh monitor',
+    coreMatrix: 'Core link matrix',
+    presence: 'Xiaojiu presence',
+    telemetry: 'Runtime telemetry',
   },
 
   // Changelog

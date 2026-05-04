@@ -1,13 +1,16 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { NInput } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import SkillList from '@/components/hermes/skills/SkillList.vue'
 import SkillDetail from '@/components/hermes/skills/SkillDetail.vue'
-import { fetchSkills, type SkillCategory } from '@/api/hermes/skills'
+import { fetchSkills, type SkillsData } from '@/api/hermes/skills'
 
 const { t } = useI18n()
-const categories = ref<SkillCategory[]>([])
+const skillsData = ref<SkillsData>({ categories: [], archived: [] })
+
+// SkillsView uses categories directly for backwards compat with the list component
+const categories = computed(() => skillsData.value.categories)
 const loading = ref(false)
 const selectedCategory = ref('')
 const selectedSkill = ref('')
@@ -33,7 +36,7 @@ onUnmounted(() => {
 async function loadSkills() {
   loading.value = true
   try {
-    categories.value = await fetchSkills()
+    skillsData.value = await fetchSkills()
   } catch (err: any) {
     console.error('Failed to load skills:', err)
   } finally {

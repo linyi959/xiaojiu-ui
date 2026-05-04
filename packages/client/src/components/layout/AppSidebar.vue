@@ -57,10 +57,15 @@ function openChangelog() {
 </script>
 
 <template>
-  <aside class="sidebar" :class="{ open: appStore.sidebarOpen }">
+  <aside class="sidebar" :class="{ open: appStore.sidebarOpen, collapsed: appStore.sidebarCollapsed }">
     <div class="sidebar-logo" @click="router.push('/hermes/chat')">
-      <img :src="logoPath" alt="Hermes" class="logo-img" />
-      <span class="logo-text">Hermes</span>
+      <img :src="logoPath" alt="小九中枢" class="logo-img" />
+      <span class="logo-text">小九中枢</span>
+      <button class="collapse-toggle" type="button" :title="appStore.sidebarCollapsed ? t('sidebar.expand') : t('sidebar.collapse')" @click.stop="appStore.toggleSidebarCollapsed">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+          <polyline :points="appStore.sidebarCollapsed ? '9 18 15 12 9 6' : '15 18 9 12 15 6'" />
+        </svg>
+      </button>
       <!-- <video class="logo-dance" :src="isDark ? danceVideoDark : danceVideoLight" autoplay loop muted playsinline /> -->
     </div>
 
@@ -172,6 +177,15 @@ function openChangelog() {
           </svg>
         </div>
         <div v-show="!isGroupCollapsed('monitoring')">
+          <button class="nav-item" :class="{ active: selectedKey === 'hermes.monitor' }" @click="handleNav('hermes.monitor')">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 3v18h18" />
+              <path d="M7 15l3-3 3 2 5-7" />
+              <path d="M18 7h-4" />
+              <path d="M18 7v4" />
+            </svg>
+            <span>{{ t("sidebar.monitor") }}</span>
+          </button>
           <button class="nav-item" :class="{ active: selectedKey === 'hermes.logs' }" @click="handleNav('hermes.logs')">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
               <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
@@ -287,7 +301,7 @@ function openChangelog() {
         <a class="github-link" href="https://github.com/EKKOLearnAI/hermes-web-ui" target="_blank" rel="noopener noreferrer" title="GitHub">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
         </a>
-        <span class="version-text" @click="openChangelog">Hermes Web UI v{{ appStore.serverVersion || "0.1.0" }}</span>
+        <span class="version-text" @click="openChangelog">小九中枢 v{{ appStore.serverVersion || "0.1.0" }}</span>
         <ThemeSwitch />
       </div>
       <NButton v-if="appStore.updateAvailable" type="primary" size="tiny" block class="update-btn" :loading="appStore.updating" @click="handleUpdate">
@@ -318,20 +332,68 @@ function openChangelog() {
 .sidebar {
   width: $sidebar-width;
   height: calc(100 * var(--vh));
-  background-color: $bg-sidebar;
-  border-right: 1px solid $border-color;
+  background:
+    linear-gradient(180deg, rgba(2, 6, 23, 0.98), rgba(15, 23, 42, 0.94)),
+    radial-gradient(circle at 50% 0%, rgba(34, 197, 94, 0.12), transparent 42%);
+  border-right: 1px solid rgba(51, 65, 85, 0.62);
   display: flex;
   flex-direction: column;
   padding: 0 12px 20px;
   flex-shrink: 0;
   transition: width $transition-normal;
+  box-shadow: 18px 0 60px rgba(0, 0, 0, 0.28), inset -1px 0 0 rgba(255, 255, 255, 0.03);
+
+  &.collapsed {
+    width: 82px;
+    padding-left: 10px;
+    padding-right: 10px;
+
+    .logo-text,
+    .nav-group-label span,
+    .nav-group-arrow,
+    .nav-item span,
+    .sidebar-footer,
+    :deep(.model-selector),
+    :deep(.profile-selector) {
+      display: none;
+    }
+
+    .sidebar-logo {
+      justify-content: center;
+      padding-left: 0;
+      padding-right: 0;
+    }
+
+    .collapse-toggle {
+      position: absolute;
+      right: -8px;
+      top: 18px;
+      display: grid;
+    }
+
+    .nav-item {
+      justify-content: center;
+      min-height: 48px;
+      padding: 12px 0;
+      border-radius: 18px;
+    }
+
+    .nav-group-label {
+      justify-content: center;
+      height: 8px;
+      padding: 5px 0;
+      opacity: 0.35;
+    }
+  }
 }
 
 .logo-img {
-  width: 28px;
-  height: 28px;
-  border-radius: 0;
+  width: 34px;
+  height: 34px;
+  border-radius: 14px;
+  object-fit: cover;
   flex-shrink: 0;
+  box-shadow: 0 0 26px rgba(34, 197, 94, 0.22);
 }
 
 .sidebar-logo {
@@ -340,14 +402,11 @@ function openChangelog() {
   gap: 10px;
   padding: 20px 12px;
   margin: 0 -12px;
-  color: $text-primary;
+  color: #f8fafc;
   cursor: pointer;
-  background-color: $bg-card;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
-
-  .dark & {
-    background-color: #393939;
-  }
+  background: linear-gradient(135deg, rgba(15, 23, 42, 0.88), rgba(2, 6, 23, 0.72));
+  border-bottom: 1px solid rgba(51, 65, 85, 0.58);
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.22);
   position: relative;
   overflow: hidden;
 
@@ -355,6 +414,27 @@ function openChangelog() {
     font-size: 18px;
     font-weight: 600;
     letter-spacing: 0.5px;
+    text-shadow: 0 0 18px rgba(34, 197, 94, 0.18);
+  }
+
+  .collapse-toggle {
+    margin-left: auto;
+    width: 28px;
+    height: 28px;
+    display: grid;
+    place-items: center;
+    border: 1px solid rgba(51, 65, 85, 0.8);
+    border-radius: 10px;
+    color: #94a3b8;
+    background: rgba(15, 23, 42, 0.72);
+    cursor: pointer;
+    transition: all 0.18s ease;
+
+    &:hover {
+      color: #bbf7d0;
+      border-color: rgba(34, 197, 94, 0.42);
+      background: rgba(34, 197, 94, 0.12);
+    }
   }
 
   .logo-dance {
@@ -401,7 +481,7 @@ function openChangelog() {
 .nav-group-label {
   font-size: 10px;
   font-weight: 600;
-  color: $text-muted;
+  color: #64748b;
   text-transform: uppercase;
   letter-spacing: 0.8px;
   padding: 8px 12px 4px;
@@ -414,7 +494,7 @@ function openChangelog() {
   transition: color $transition-fast;
 
   &:hover {
-    color: $text-secondary;
+    color: #94a3b8;
   }
 
   .nav-group:first-child & {
@@ -438,7 +518,7 @@ function openChangelog() {
   padding: 12px;
   border: none;
   background: none;
-  color: $text-secondary;
+  color: #94a3b8;
   font-size: 14px;
   border-radius: $radius-sm;
   cursor: pointer;
@@ -447,25 +527,26 @@ function openChangelog() {
   text-align: left;
 
   &:hover {
-    background-color: rgba(var(--accent-primary-rgb), 0.06);
-    color: $text-primary;
+    background: rgba(34, 197, 94, 0.08);
+    color: #e2e8f0;
   }
 
   &.active {
-    background-color: rgba(var(--accent-primary-rgb), 0.12);
-    color: $accent-primary;
+    background: linear-gradient(135deg, rgba(34, 197, 94, 0.16), rgba(56, 189, 248, 0.08));
+    color: #bbf7d0;
+    box-shadow: inset 0 0 0 1px rgba(34, 197, 94, 0.24), 0 10px 30px rgba(34, 197, 94, 0.08);
   }
 
   .beta-tag {
     font-size: 10px;
-    color: $text-muted;
+    color: #64748b;
     margin-left: 2px;
   }
 }
 
 .sidebar-footer {
   padding-top: 8px;
-  border-top: 1px solid $border-color;
+  border-top: 1px solid rgba(51, 65, 85, 0.62);
 }
 
 .logout-item {
@@ -473,7 +554,7 @@ function openChangelog() {
   padding: 10px 12px;
   border-radius: 0;
   font-size: 13px;
-  color: $text-muted;
+  color: #64748b;
 
   &:hover {
     color: $error;
@@ -511,14 +592,14 @@ function openChangelog() {
   }
 
   .status-text {
-    color: $text-secondary;
+    color: #94a3b8;
   }
 }
 
 .version-info {
   padding: 2px 12px 8px;
   font-size: 11px;
-  color: $text-muted;
+  color: #64748b;
   display: flex;
   flex-direction: row;
   align-items: center;
@@ -527,7 +608,7 @@ function openChangelog() {
 }
 
 .github-link {
-  color: $text-muted;
+  color: #64748b;
   display: flex;
   align-items: center;
   transition: color 0.2s;

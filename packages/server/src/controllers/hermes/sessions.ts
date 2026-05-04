@@ -1,7 +1,7 @@
 import * as hermesCli from '../../services/hermes/hermes-cli'
 import { listConversationSummaries, getConversationDetail } from '../../services/hermes/conversations'
 import { listConversationSummariesFromDb, getConversationDetailFromDb } from '../../db/hermes/conversations-db'
-import { listSessionSummaries, searchSessionSummaries, getUsageStatsFromDb } from '../../db/hermes/sessions-db'
+import { listSessionSummaries, searchSessionSummaries, getUsageStatsFromDb, getSessionDetailFromDb } from '../../db/hermes/sessions-db'
 import {
   listSessions as localListSessions,
   searchSessions as localSearchSessions,
@@ -232,7 +232,18 @@ export async function get(ctx: any) {
  * GET /api/hermes/sessions/hermes/:id
  */
 export async function getHermesSession(ctx: any) {
+  // Try database first (consistent with listHermesSessions)
+  try {
+    const session = await getSessionDetailFromDb(ctx.params.id)
+    if (session && session.source !== 'api_server' && session.source !== 'cron') {
+      ctx.body = { session }
+      return
+    }
+  } catch (err) {
+    logger.warn(err, 'Hermes Session DB: detail query failed, falling back to CLI')
+  }
 
+  // Fallback to CLI
   const session = await hermesCli.getSession(ctx.params.id)
   if (!session) {
     ctx.status = 404
@@ -448,15 +459,14 @@ export async function usageStats(ctx: any) {
     const d = new Date(now)
     d.setDate(d.getDate() - i)
     const key = d.toISOString().slice(0, 10)
-    dayMap.set(key, { date: key, tokens: 0, cache: 0, sessions: 0, cost: 0 })
+    dayMap.set(key, { date: key, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0, sessions: 0, errors: 0, cost: 0 })
   }
   for (const d of [...local.by_day, ...hermes.by_day]) {
     const existing = dayMap.get(d.date)
     if (existing) {
-      existing.tokens += d.tokens
-      existing.cache += d.cache
-      existing.sessions += d.sessions
-      existing.cost += d.cost
+      existing.input_tokens += d.input_tokens; existing.output_tokens += d.output_tokens
+      existing.cache_read_tokens += d.cache_read_tokens; existing.cache_write_tokens += d.cache_write_tokens
+      existing.sessions += d.sessions; existing.errors += d.errors; existing.cost += d.cost
     }
   }
 

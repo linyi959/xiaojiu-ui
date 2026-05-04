@@ -101,7 +101,7 @@ async function handlePasswordLogin() {
   <div class="login-view">
     <div class="login-card">
       <div class="login-logo">
-        <img src="/logo.png" alt="Hermes" width="80" height="80" />
+        <img src="/logo.png" alt="小九中枢" width="80" height="80" />
       </div>
       <h1 class="login-title">{{ t("login.title") }}</h1>
       <p class="login-desc">{{ t("login.description") }}</p>
@@ -186,6 +186,11 @@ async function handlePasswordLogin() {
 
 .login-logo {
   margin-bottom: 24px;
+
+  img {
+    border-radius: 50%;
+    object-fit: cover;
+  }
 }
 
 .login-title {
