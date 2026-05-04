@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import { useAppStore } from '@/stores/hermes/app'
 import { useChatStore } from '@/stores/hermes/chat'
 import { useCommandPalette } from '@/composables/useCommandPalette'
 
 const route = useRoute()
+const router = useRouter()
 const appStore = useAppStore()
 const chatStore = useChatStore()
 const { open: openPalette } = useCommandPalette()
@@ -19,6 +20,7 @@ const { activeSession, isStreaming } = storeToRefs(chatStore)
 
 // 路由名 -> 模块元数据（group / title / subtitle），严格对齐契约五大模块
 const moduleMap: Record<string, { group: string; title: string; subtitle: string; code: string }> = {
+  'hermes.home':      { group: '中枢总览', title: '中枢总览',    subtitle: 'Hermes 实时运行总台',         code: 'HOME-00' },
   'hermes.chat':      { group: '对话中枢', title: '对话核心',    subtitle: '小九与林燚的主通道',       code: 'CHAT-01' },
   'hermes.history':   { group: '对话中枢', title: '会话历史',    subtitle: '所有曾经发生过的谈话',     code: 'CHAT-02' },
   'hermes.groupChat': { group: '对话中枢', title: '群组协作',    subtitle: '多 Agent 协同对话',        code: 'CHAT-03' },
@@ -51,6 +53,10 @@ const sessionLabel = computed(() => {
   return `${String(s.id).slice(0, 8)} · ${n} msg`
 })
 const modelLabel = computed(() => appStore.selectedModel || '—')
+
+function refreshCurrentPage() {
+  router.go(0)
+}
 </script>
 
 <template>
@@ -98,6 +104,16 @@ const modelLabel = computed(() => appStore.selectedModel || '—')
             </div>
           </div>
         </div>
+
+        <button
+          type="button"
+          class="session-refresh-trigger"
+          title="刷新当前会话页面"
+          @click="refreshCurrentPage"
+        >
+          <span class="refresh-icon">↻</span>
+          <span class="refresh-text">刷新</span>
+        </button>
 
         <button
           type="button"
@@ -210,6 +226,7 @@ const modelLabel = computed(() => appStore.selectedModel || '—')
   gap: 12px;
 }
 
+.session-refresh-trigger,
 .cmdk-trigger {
   display: flex;
   align-items: center;
@@ -235,7 +252,26 @@ const modelLabel = computed(() => appStore.selectedModel || '—')
   &:active {
     transform: translateY(1px);
   }
+}
 
+.session-refresh-trigger {
+  gap: 8px;
+  padding-inline: 12px;
+
+  .refresh-icon {
+    color: #63e7ff;
+    font-family: 'Fira Code', monospace;
+    font-size: 14px;
+    font-weight: 600;
+    text-shadow: 0 0 8px rgba(99, 231, 255, 0.42);
+  }
+
+  .refresh-text {
+    font-weight: 500;
+  }
+}
+
+.cmdk-trigger {
   .cmdk-icon {
     font-family: 'Fira Code', monospace;
     color: #63e7ff;
@@ -1042,53 +1078,112 @@ const modelLabel = computed(() => appStore.selectedModel || '—')
   white-space: pre-wrap;
 }
 
-/* 8. 工具调用卡片：紧凑终端标签风格 */
+/* 8. 工具调用卡片：工程状态展示卡 */
 .command-room-adapter :deep(.chat-view .message.tool) {
   display: flex !important;
   flex-direction: column !important;
-  align-items: center !important;
+  align-items: stretch !important;
 }
+
 .command-room-adapter :deep(.chat-view .tool-mini-card) {
-  margin: 4px auto !important;
+  margin: 6px 0 6px 48px !important;
   padding: 0 !important;
-  max-width: 480px !important;
-  width: 100% !important;
+  width: min(720px, calc(100% - 84px)) !important;
+  max-width: none !important;
+  border-radius: 14px !important;
   border: 1px solid rgba(99, 231, 255, 0.12) !important;
-  border-radius: 8px !important;
-  background: rgba(2, 6, 23, 0.6) !important;
+  background:
+    linear-gradient(135deg, rgba(99, 231, 255, 0.105), rgba(77, 141, 255, 0.035)),
+    rgba(2, 6, 23, 0.64) !important;
   overflow: hidden;
-  box-shadow: none !important;
-  transition: border-color 0.2s ease;
+  box-shadow:
+    0 16px 40px rgba(0, 0, 0, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06) !important;
+  transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease !important;
+}
+
+.command-room-adapter :deep(.chat-view .tool-mini-card:hover) {
+  transform: translateY(-1px);
+  border-color: rgba(99, 231, 255, 0.24) !important;
+  box-shadow:
+    0 20px 52px rgba(0, 0, 0, 0.24),
+    0 0 22px rgba(99, 231, 255, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.07) !important;
 }
 
 .command-room-adapter :deep(.chat-view .tool-mini-card.is-running) {
-  border-color: rgba(99, 231, 255, 0.35) !important;
-  border-left: 3px solid #63e7ff !important;
+  border-color: rgba(99, 231, 255, 0.42) !important;
 }
 
 .command-room-adapter :deep(.chat-view .tool-mini-card.is-done) {
-  border-left: 3px solid rgba(110, 231, 183, 0.5) !important;
+  border-color: rgba(110, 231, 183, 0.24) !important;
 }
 
 .command-room-adapter :deep(.chat-view .tool-mini-card.is-error) {
-  border-left: 3px solid #ff6b8a !important;
-  border-color: rgba(255, 107, 138, 0.35) !important;
+  border-color: rgba(255, 107, 138, 0.38) !important;
 }
 
 .command-room-adapter :deep(.chat-view .tool-mini-head) {
-  padding: 6px 10px !important;
+  padding: 11px 14px 8px 16px !important;
   background: transparent !important;
   border-bottom: none !important;
-  display: flex !important;
+  display: grid !important;
+  grid-template-columns: 30px minmax(0, 1fr) auto auto !important;
   align-items: center !important;
-  gap: 6px !important;
+  gap: 10px !important;
   cursor: pointer !important;
 }
 
-.command-room-adapter :deep(.chat-view .tool-chevron-wrap) {
-  margin-left: auto !important;
+.command-room-adapter :deep(.chat-view .tool-orb) {
+  width: 30px !important;
+  height: 30px !important;
+  border-radius: 10px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  background: rgba(99, 231, 255, 0.08) !important;
+  border: 1px solid rgba(99, 231, 255, 0.16) !important;
+}
+
+.command-room-adapter :deep(.chat-view .tool-title-stack) {
+  min-width: 0 !important;
+}
+
+.command-room-adapter :deep(.chat-view .tool-title-row) {
   display: flex !important;
   align-items: center !important;
+  gap: 8px !important;
+  min-width: 0 !important;
+}
+
+.command-room-adapter :deep(.chat-view .tool-kicker) {
+  color: rgba(99, 231, 255, 0.74) !important;
+  font-family: 'Fira Code', monospace !important;
+  font-size: 9px !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.18em !important;
+  text-transform: uppercase;
+}
+
+.command-room-adapter :deep(.chat-view .tool-route-label) {
+  min-width: 0 !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+  color: rgba(185, 201, 222, 0.58) !important;
+  font-family: 'Fira Code', monospace !important;
+  font-size: 10px !important;
+}
+
+.command-room-adapter :deep(.chat-view .tool-chevron-wrap) {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 22px !important;
+  height: 22px !important;
+  border-radius: 999px !important;
+  background: rgba(99, 231, 255, 0.06) !important;
+  color: rgba(203, 229, 255, 0.86) !important;
 }
 
 .command-room-adapter :deep(.chat-view .tool-status-dot) {
@@ -1100,7 +1195,6 @@ const modelLabel = computed(() => appStore.selectedModel || '—')
   flex-shrink: 0;
 }
 
-.command-room-adapter :deep(.chat-view .tool-mini-card.is-running .tool-status-dot),
 .command-room-adapter :deep(.chat-view .tool-mini-card.is-running .tool-status-dot) {
   background: #63e7ff !important;
   box-shadow: 0 0 12px rgba(99, 231, 255, 0.85) !important;
@@ -1125,49 +1219,98 @@ const modelLabel = computed(() => appStore.selectedModel || '—')
 }
 
 .command-room-adapter :deep(.chat-view .tool-mini-title) {
-  color: #63e7ff !important;
+  color: #edf7ff !important;
   font-family: 'Fira Code', monospace !important;
-  font-size: 11px !important;
-  font-weight: 620 !important;
+  font-size: 12px !important;
+  font-weight: 720 !important;
+  letter-spacing: 0.04em !important;
+  text-transform: uppercase;
+  white-space: nowrap !important;
+}
+
+.command-room-adapter :deep(.chat-view .tool-mini-preview) {
+  margin-top: 4px !important;
+  color: #b9c9de !important;
+  font-family: 'Fira Code', monospace !important;
+  font-size: 11.5px !important;
+  line-height: 1.45 !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+}
+
+.command-room-adapter :deep(.chat-view .tool-metrics) {
+  display: flex !important;
+  align-items: flex-end !important;
+  flex-direction: column !important;
+  gap: 5px !important;
+}
+
+.command-room-adapter :deep(.chat-view .tool-state-label),
+.command-room-adapter :deep(.chat-view .tool-duration-chip),
+.command-room-adapter :deep(.chat-view .tool-meta-pill),
+.command-room-adapter :deep(.chat-view .tool-meta-text) {
+  font-family: 'Fira Code', monospace !important;
+  font-size: 10px !important;
   letter-spacing: 0.08em !important;
   text-transform: uppercase;
 }
 
-.command-room-adapter :deep(.chat-view .tool-mini-preview) {
-  color: #b9c9de !important;
-  font-family: 'Fira Code', monospace !important;
-  font-size: 11.5px !important;
+.command-room-adapter :deep(.chat-view .tool-state-label),
+.command-room-adapter :deep(.chat-view .tool-duration-chip) {
+  padding: 3px 8px !important;
+  border-radius: 999px !important;
+  border: 1px solid rgba(99, 231, 255, 0.14) !important;
+  background: rgba(99, 231, 255, 0.07) !important;
+  color: #cbe5ff !important;
 }
 
-.command-room-adapter :deep(.chat-view .tool-state-label),
-.command-room-adapter :deep(.chat-view .tool-meta-text) {
-  color: #7f90aa !important;
-  font-family: 'Fira Code', monospace !important;
-  font-size: 10px !important;
-  letter-spacing: 0.1em !important;
-  text-transform: uppercase;
+.command-room-adapter :deep(.chat-view .tool-meta-strip) {
+  position: relative !important;
+  z-index: 1 !important;
+  display: flex !important;
+  flex-wrap: wrap !important;
+  gap: 6px !important;
+  padding: 0 14px 12px 56px !important;
+}
+
+.command-room-adapter :deep(.chat-view .tool-meta-pill) {
+  padding: 3px 8px !important;
+  border-radius: 999px !important;
+  color: rgba(203, 229, 255, 0.68) !important;
+  border: 1px solid rgba(99, 231, 255, 0.09) !important;
+  background: rgba(2, 6, 23, 0.24) !important;
 }
 
 .command-room-adapter :deep(.chat-view .tool-details) {
-  padding: 8px 10px 10px !important;
-  background: transparent !important;
+  padding: 10px 14px 14px 56px !important;
+  background: rgba(2, 6, 23, 0.24) !important;
   border-top: 1px solid rgba(99, 231, 255, 0.08) !important;
 }
 
 .command-room-adapter :deep(.chat-view .tool-detail-label) {
+  display: flex !important;
+  justify-content: space-between !important;
+  gap: 12px !important;
   color: #7f90aa !important;
   font-family: 'Fira Code', monospace !important;
   font-size: 9.5px !important;
   letter-spacing: 0.18em !important;
   text-transform: uppercase;
-  margin-bottom: 4px;
+  margin-bottom: 5px;
+}
+
+.command-room-adapter :deep(.chat-view .tool-detail-hint) {
+  color: rgba(99, 231, 255, 0.54) !important;
 }
 
 .command-room-adapter :deep(.chat-view .tool-detail-code-block) {
-  padding: 8px 10px !important;
-  border: 1px solid rgba(99, 231, 255, 0.08) !important;
-  border-radius: 6px !important;
-  background: rgba(2, 6, 23, 0.5) !important;
+  max-height: 260px !important;
+  overflow: auto !important;
+  padding: 9px 11px !important;
+  border: 1px solid rgba(99, 231, 255, 0.1) !important;
+  border-radius: 8px !important;
+  background: rgba(2, 6, 23, 0.56) !important;
   color: #cbe5ff !important;
   font-family: 'Fira Code', monospace !important;
   font-size: 12px !important;

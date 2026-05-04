@@ -5,6 +5,14 @@ import { useRoute, useRouter } from 'vue-router'
 const route = useRoute()
 const router = useRouter()
 
+const homeEntry: ModuleEntry = {
+  name: 'hermes.home',
+  path: '/hermes/home',
+  label: '首页总览',
+  short: 'HOME',
+  icon: 'home',
+}
+
 type ModuleEntry = {
   name: string
   path: string
@@ -70,6 +78,10 @@ const moduleGroups: ModuleGroup[] = [
 ]
 
 const activeMeta = computed(() => {
+  if (route.name === homeEntry.name) {
+    return { ...homeEntry, group: '中枢总览' }
+  }
+
   for (const group of moduleGroups) {
     const found = group.modules.find(item => item.name === route.name)
     if (found) return { ...found, group: group.title }
@@ -143,6 +155,21 @@ function toggleGroup(key: string) {
       <strong>{{ activeMeta.short }}</strong>
     </div>
 
+    <button
+      type="button"
+      class="home-entry"
+      :class="{ active: route.name === homeEntry.name }"
+      :title="homeEntry.label"
+      :aria-label="homeEntry.label"
+      @click="go(homeEntry.path)"
+    >
+      <span class="home-entry-glyph" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="18" height="18"><path d="M4 10.5L12 4l8 6.5V20H4z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M9 20v-5h6v5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>
+      </span>
+      <span class="home-entry-code">{{ homeEntry.short }}</span>
+      <span class="home-entry-label">{{ homeEntry.label }}</span>
+    </button>
+
     <nav class="module-groups">
       <section
         v-for="group in moduleGroups"
@@ -177,6 +204,8 @@ function toggleGroup(key: string) {
             <svg v-if="item.icon === 'chat'" viewBox="0 0 24 24" width="18" height="18"><path d="M4 5h16v10H7l-3 3V5z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
             <!-- history -->
             <svg v-else-if="item.icon === 'history'" viewBox="0 0 24 24" width="18" height="18"><path d="M12 6v6l4 2" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round"/><circle cx="12" cy="12" r="8" stroke="currentColor" stroke-width="1.4" fill="none"/></svg>
+            <!-- home -->
+            <svg v-else-if="item.icon === 'home'" viewBox="0 0 24 24" width="18" height="18"><path d="M4 10.5L12 4l8 6.5V20H4z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M9 20v-5h6v5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>
             <!-- group -->
             <svg v-else-if="item.icon === 'group'" viewBox="0 0 24 24" width="18" height="18"><circle cx="9" cy="10" r="3" stroke="currentColor" stroke-width="1.4" fill="none"/><circle cx="17" cy="10" r="2.2" stroke="currentColor" stroke-width="1.3" fill="none"/><path d="M4 18c1-2.8 3-4 5-4s4 1.2 5 4" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round"/><path d="M14 18c.6-2 2-3 3-3s2 .6 2.8 2" stroke="currentColor" stroke-width="1.3" fill="none" stroke-linecap="round"/></svg>
             <!-- radar -->
@@ -257,6 +286,7 @@ function toggleGroup(key: string) {
 
 .brand-block,
 .active-module-chip,
+.home-entry,
 .module-groups {
   position: relative;
   z-index: 3;
@@ -334,6 +364,58 @@ function toggleGroup(key: string) {
     font-weight: 650;
     letter-spacing: 0.1em;
   }
+}
+
+.home-entry {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 10px 4px 12px;
+  border-radius: 18px;
+  border: 1px solid rgba(99, 231, 255, 0.18);
+  background: linear-gradient(180deg, rgba(99, 231, 255, 0.12), rgba(77, 141, 255, 0.05));
+  color: var(--xr-text);
+  cursor: pointer;
+  transition: border-color 0.18s ease, transform 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
+
+  &:hover {
+    border-color: rgba(99, 231, 255, 0.34);
+    box-shadow: 0 0 20px rgba(99, 231, 255, 0.16);
+    transform: translateY(-1px);
+  }
+
+  &.active {
+    border-color: rgba(99, 231, 255, 0.46);
+    background: linear-gradient(180deg, rgba(99, 231, 255, 0.18), rgba(77, 141, 255, 0.08));
+    box-shadow: 0 0 24px rgba(99, 231, 255, 0.18), inset 0 0 24px rgba(99, 231, 255, 0.06);
+  }
+}
+
+.home-entry-glyph {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  color: var(--xr-cyan);
+  background: radial-gradient(circle, rgba(99, 231, 255, 0.18), rgba(169, 140, 255, 0.08));
+  border: 1px solid rgba(99, 231, 255, 0.18);
+}
+
+.home-entry-code {
+  color: var(--xr-text);
+  font-family: 'Fira Code', monospace;
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.14em;
+}
+
+.home-entry-label {
+  color: var(--xr-soft);
+  font-size: 10px;
+  letter-spacing: 0.1em;
 }
 
 .pulse {

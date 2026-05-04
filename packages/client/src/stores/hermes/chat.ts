@@ -869,9 +869,19 @@ export const useChatStore = defineStore('chat', () => {
                 // Check if tool errored
                 const hasError = (evt as any).error === true
                 const duration = (evt as any).duration
+                const rawOutput = (evt as any).output
+                const toolResult = rawOutput == null
+                  ? undefined
+                  : typeof rawOutput === 'string'
+                    ? rawOutput
+                    : JSON.stringify(rawOutput)
                 updateMessage(sid, last.id, {
                   toolStatus: hasError ? 'error' : 'done',
                   toolDuration: duration,
+                  toolResult,
+                  toolPreview: toolResult
+                    ? toolResult.replace(/\s+/g, ' ').slice(0, 140)
+                    : last.toolPreview,
                 })
               }
 

@@ -618,8 +618,11 @@ async function handleWorkspaceConfirm() {
 }
 
 .session-list {
-  width: 220px;
-  border-right: 1px solid $border-color;
+  width: 248px;
+  border-right: 1px solid rgba($accent-primary, 0.14);
+  background:
+    linear-gradient(180deg, rgba($accent-primary, 0.035), transparent 28%),
+    rgba(5, 11, 24, 0.42);
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
@@ -677,7 +680,7 @@ async function handleWorkspaceConfirm() {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px;
+  padding: 14px 14px 10px;
   flex-shrink: 0;
 }
 
@@ -710,14 +713,17 @@ async function handleWorkspaceConfirm() {
 }
 
 .session-scope-note {
-  margin: 0 12px 10px;
-  padding: 8px 10px;
-  border: 1px solid rgba($accent-primary, 0.16);
-  border-radius: $radius-sm;
-  background: rgba($accent-primary, 0.06);
-  color: $text-secondary;
+  margin: 0 14px 12px;
+  padding: 9px 10px;
+  border: 1px solid rgba($accent-primary, 0.18);
+  border-radius: 10px;
+  background:
+    linear-gradient(135deg, rgba($accent-primary, 0.105), transparent 76%),
+    rgba(255, 255, 255, 0.028);
+  color: rgba($text-secondary, 0.88);
   font-size: 11px;
   line-height: 1.45;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.045);
 }
 
 .session-scope-link {
@@ -772,7 +778,18 @@ async function handleWorkspaceConfirm() {
 .session-items {
   flex: 1;
   overflow-y: auto;
-  padding: 0 6px 12px;
+  padding: 0 8px 14px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba($accent-primary, 0.32) transparent;
+}
+
+.session-items::-webkit-scrollbar {
+  width: 6px;
+}
+
+.session-items::-webkit-scrollbar-thumb {
+  background: rgba($accent-primary, 0.26);
+  border-radius: 999px;
 }
 
 .session-loading,
@@ -788,10 +805,10 @@ async function handleWorkspaceConfirm() {
   align-items: center;
   justify-content: space-between;
   width: 100%;
-  padding: 8px 10px;
-  border: none;
-  background: none;
-  border-radius: $radius-sm;
+  padding: 9px 10px;
+  border: 1px solid transparent;
+  background: rgba(255, 255, 255, 0.018);
+  border-radius: 10px;
   cursor: pointer;
   text-align: left;
   color: $text-secondary;
@@ -799,7 +816,8 @@ async function handleWorkspaceConfirm() {
   margin-bottom: 2px;
 
   &:hover {
-    background: rgba($accent-primary, 0.06);
+    border-color: rgba($accent-primary, 0.18);
+    background: rgba($accent-primary, 0.07);
     color: $text-primary;
 
     .session-item-delete {
@@ -808,9 +826,15 @@ async function handleWorkspaceConfirm() {
   }
 
   &.active {
-    background: rgba(var(--accent-primary-rgb), 0.12);
+    border-color: rgba($accent-primary, 0.32);
+    background:
+      linear-gradient(90deg, rgba(var(--accent-primary-rgb), 0.2), transparent 72%),
+      rgba(var(--accent-primary-rgb), 0.08);
     color: $text-primary;
     font-weight: 500;
+    box-shadow:
+      inset 3px 0 0 rgba(var(--accent-primary-rgb), 0.8),
+      0 10px 28px rgba($accent-primary, 0.08);
   }
 
   &.active .session-item-title {
@@ -915,6 +939,10 @@ async function handleWorkspaceConfirm() {
   flex-direction: column;
   overflow: hidden;
   min-width: 0;
+  border-left: 1px solid rgba(255, 255, 255, 0.035);
+  background:
+    radial-gradient(circle at 50% 0%, rgba($accent-primary, 0.07), transparent 38%),
+    rgba(255, 255, 255, 0.01);
 }
 
 .chat-header {

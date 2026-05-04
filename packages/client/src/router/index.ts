@@ -11,6 +11,11 @@ const router = createRouter({
       meta: { public: true },
     },
     {
+      path: '/hermes/home',
+      name: 'hermes.home',
+      component: () => import('@/views/hermes/MonitorView.vue'),
+    },
+    {
       path: '/hermes/chat',
       name: 'hermes.chat',
       component: () => import('@/views/hermes/ChatView.vue'),
@@ -98,7 +103,7 @@ router.beforeEach((to, _from, next) => {
   if (to.meta.public) {
     // Already has key, skip login
     if (to.name === 'login' && hasApiKey()) {
-      next({ path: '/hermes/chat' })
+      next({ path: '/hermes/home' })
       return
     }
     next()

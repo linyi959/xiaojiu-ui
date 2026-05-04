@@ -42,26 +42,25 @@ const presenceState = computed<PresenceState>(() => {
 
 const stateCopy = computed(() => {
   if (presenceState.value === 'thinking') {
-    if (activeTool.value?.toolName) return `调用 ${activeTool.value.toolName}`
-    return '正在思考'
+    if (activeTool.value?.toolName) return activeTool.value.toolName
+    return '在想你这句'
   }
-  if (presenceState.value === 'loading') return '同步会话'
-  if (presenceState.value === 'offline') return '链路离线'
-  if (presenceState.value === 'error') return '刚才出错了'
-  return route.name === 'hermes.chat' ? '等你说话' : '安静在线'
+  if (presenceState.value === 'loading') return '刚连上这边'
+  if (presenceState.value === 'offline') return '暂时断开'
+  if (presenceState.value === 'error') return '刚才卡了一下'
+  return route.name === 'hermes.chat' ? '我在听' : '安静待命'
 })
 
 const moodCopy = computed(() => {
-  if (presenceState.value === 'thinking') return activeTool.value ? 'TOOL RUNNING' : 'STREAMING'
+  if (presenceState.value === 'thinking') return activeTool.value ? 'ACTING' : 'THINKING'
   if (presenceState.value === 'loading') return 'SYNCING'
   if (presenceState.value === 'offline') return 'OFFLINE'
-  if (presenceState.value === 'error') return 'CHECK NEEDED'
+  if (presenceState.value === 'error') return 'RECOVERING'
   return route.name === 'hermes.chat' ? 'LISTENING' : 'STANDBY'
 })
 
-const linkCopy = computed(() => (appStore.connected ? 'CONNECTED' : 'OFFLINE'))
+const linkCopy = computed(() => (appStore.connected ? 'ONLINE' : 'OFFLINE'))
 
-// 情绪 → 素材映射，吃满 openroom 下的资源（happy/shy/angry/default）
 const characterVideo = computed(() => {
   switch (presenceState.value) {
     case 'thinking': return `${assetBase}/happy.mp4`
@@ -75,25 +74,23 @@ const characterVideo = computed(() => {
 })
 
 const sessionTitle = computed(() => chatStore.activeSession?.title || '新的对话')
-const messageCount = computed(() => chatStore.messages.length)
 const activityCopy = computed(() => {
   if (activeTool.value?.toolName) return activeTool.value.toolName
-  if (chatStore.isStreaming) return '模型回复中'
-  if (chatStore.isLoadingMessages) return '读取历史'
-  if (lastSystemError.value) return '需要检查'
-  return '待命中'
+  if (chatStore.isStreaming) return '正在回你'
+  if (chatStore.isLoadingMessages) return '翻一下刚才'
+  if (lastSystemError.value) return '收一下刚才那步'
+  return '在这儿陪着'
 })
 
-// 角色气泡：根据状态给一句人话，不是 UI 报告
 const bubbleCopy = computed(() => {
   if (presenceState.value === 'thinking') {
-    if (activeTool.value?.toolName) return `让我查一下 ${activeTool.value.toolName}…`
-    return '让我想想…'
+    if (activeTool.value?.toolName) return `${activeTool.value.toolName}…`
+    return '我想一下…'
   }
-  if (presenceState.value === 'loading') return '同步一下会话哈'
-  if (presenceState.value === 'offline') return '链路断了，我先离线'
-  if (presenceState.value === 'error') return '刚才那步出错了，看一眼'
-  if (route.name === 'hermes.chat') return '我在，说吧'
+  if (presenceState.value === 'loading') return '刚接上。'
+  if (presenceState.value === 'offline') return '断了一下。'
+  if (presenceState.value === 'error') return '刚才那步错了。'
+  if (route.name === 'hermes.chat') return '说吧。'
   return ''
 })
 </script>
@@ -138,21 +135,35 @@ const bubbleCopy = computed(() => {
     <div class="side-energy side-energy-right" />
 
     <header v-if="!collapsed" class="presence-head">
-      <div>
-        <p>XIAOJIU PRESENCE</p>
-        <strong>{{ stateCopy }}</strong>
-        <small>{{ moodCopy }}</small>
+      <div class="head-shell-plate">
+        <div class="presence-eyebrow-row">
+          <p>XIAOJIU PRESENCE</p>
+          <span class="presence-divider" />
+          <small>{{ moodCopy }}</small>
+        </div>
+        <div class="presence-headline-row">
+          <div class="presence-headline">
+            <strong>{{ stateCopy }}</strong>
+            <span class="presence-subtext">只为你亮着</span>
+          </div>
+          <span class="presence-status" aria-label="连接状态">
+            <i />
+            {{ linkCopy }}
+          </span>
+        </div>
       </div>
-      <span class="presence-status" aria-label="连接状态">
-        <i />
-        {{ linkCopy }}
-      </span>
+      <div class="head-flowline" aria-hidden="true">
+        <span class="flowline-node" />
+        <span class="flowline-track" />
+        <span class="flowline-signal">PRESENCE LIVE</span>
+      </div>
     </header>
 
     <section class="presence-capsule" aria-label="小九透明生命舱">
       <div class="capsule-backlight" />
+      <div class="capsule-shell" />
+      <div class="capsule-sheen" />
       <div class="scan-ring ring-outer" />
-      <div class="scan-ring ring-mid" />
       <div class="scan-ring ring-inner" />
       <div class="vertical-scan" />
 
@@ -161,23 +172,25 @@ const bubbleCopy = computed(() => {
         <span />
         <span />
       </div>
-      <div class="mini-telemetry telemetry-right">
-        <span />
-        <span />
-        <span />
-      </div>
 
       <figure class="character-stage">
-        <video
-          class="character-video"
-          :src="characterVideo"
-          autoplay
-          muted
-          loop
-          playsinline
-          poster="/xiaojiu-presence/openroom/base.png"
-        />
-        <img class="character-fallback" src="/xiaojiu-presence/openroom/base.png" alt="小九虚拟人物" />
+        <div class="character-frame">
+          <span class="frame-notch frame-notch-left" />
+          <span class="frame-notch frame-notch-right" />
+          <span class="frame-spine frame-spine-top" />
+          <span class="frame-spine frame-spine-bottom" />
+          <div class="character-frame-inner">
+            <div class="frame-vignette" />
+            <video
+              class="character-video"
+              :src="characterVideo"
+              autoplay
+              muted
+              loop
+              playsinline
+            />
+          </div>
+        </div>
         <transition name="bubble-fade">
           <div
             v-if="!collapsed && bubbleCopy"
@@ -192,20 +205,24 @@ const bubbleCopy = computed(() => {
       </figure>
 
       <div class="floor-light" />
+      <div class="floor-reflection" />
     </section>
 
-    <footer v-if="!collapsed" class="status-strip" aria-label="小九状态仪表">
-      <div class="strip-row">
-        <span>会话</span>
-        <strong :title="sessionTitle">{{ sessionTitle }}</strong>
-      </div>
-      <div class="strip-row">
-        <span>活动</span>
-        <strong :title="activityCopy">{{ activityCopy }}</strong>
-      </div>
-      <div class="strip-row">
-        <span>消息</span>
-        <strong>{{ messageCount }} 条</strong>
+    <footer v-if="!collapsed" class="status-strip" aria-label="小九状态基座">
+      <div class="status-base-shell">
+        <span class="base-rail base-rail-left" />
+        <div class="base-core">
+          <div class="base-readout">
+            <span>SESSION</span>
+            <strong :title="sessionTitle">{{ sessionTitle }}</strong>
+          </div>
+          <div class="base-divider" />
+          <div class="base-readout">
+            <span>ACTIVITY</span>
+            <strong :title="activityCopy">{{ activityCopy }}</strong>
+          </div>
+        </div>
+        <span class="base-rail base-rail-right" />
       </div>
     </footer>
 
@@ -301,8 +318,8 @@ const bubbleCopy = computed(() => {
   width: 1px;
   pointer-events: none;
   background: linear-gradient(180deg, transparent, rgba(99, 231, 255, 0.52), rgba(169, 140, 255, 0.28), transparent);
-  opacity: 0.56;
-  filter: drop-shadow(0 0 8px rgba(99, 231, 255, 0.5));
+  opacity: 0.22;
+  filter: drop-shadow(0 0 4px rgba(99, 231, 255, 0.2));
 }
 
 .side-energy-left { left: 13px; }
@@ -319,68 +336,168 @@ const bubbleCopy = computed(() => {
 }
 
 .presence-head {
+  display: grid;
+  gap: 8px;
+  min-height: 72px;
+  padding: 2px 0 0 32px;
+}
+
+.head-shell-plate {
+  position: relative;
+  display: grid;
+  gap: 7px;
+  padding: 8px 10px 10px 0;
+}
+
+.head-shell-plate::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 34px;
+  height: 1px;
+  background: linear-gradient(90deg, rgba(99, 231, 255, 0.34), rgba(99, 231, 255, 0.02));
+}
+
+.head-shell-plate::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 24px;
+  width: 10px;
+  height: 10px;
+  border-top: 1px solid rgba(99, 231, 255, 0.2);
+  border-right: 1px solid rgba(99, 231, 255, 0.16);
+  border-top-right-radius: 10px;
+  opacity: 0.9;
+}
+
+.presence-kicker {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+
+.presence-headline-row {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 10px;
-  min-height: 62px;
-  padding-bottom: 10px;
-  padding-left: 32px;
+  gap: 12px;
+}
 
-  p {
-    margin: 0 0 6px;
-    color: var(--xr-cyan);
+.head-flowline {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding-left: 3px;
+  color: rgba(185, 201, 222, 0.46);
+  font-family: 'Fira Code', monospace;
+  font-size: 7px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.flowline-node {
+  width: 4px;
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(99, 231, 255, 0.82);
+  box-shadow: 0 0 8px rgba(99, 231, 255, 0.34);
+  flex-shrink: 0;
+}
+
+.flowline-track {
+  width: 44px;
+  height: 1px;
+  background: linear-gradient(90deg, rgba(99, 231, 255, 0.3), rgba(99, 231, 255, 0.04));
+}
+
+.flowline-signal {
+  white-space: nowrap;
+}
+
+.presence-eyebrow-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+
+  p,
+  small {
+    margin: 0;
     font-family: 'Fira Code', monospace;
-    font-size: 9px;
-    letter-spacing: 0.2em;
+    font-size: 8px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
   }
 
-  strong {
-    display: block;
-    max-width: 140px;
-    font-size: 18px;
-    line-height: 1.1;
-    letter-spacing: -0.04em;
+  p {
+    color: rgba(99, 231, 255, 0.82);
   }
 
   small {
-    display: block;
-    margin-top: 5px;
-    color: var(--xr-muted);
-    font-family: 'Fira Code', monospace;
-    font-size: 9px;
-    letter-spacing: 0.14em;
+    color: rgba(185, 201, 222, 0.38);
   }
+}
+
+.presence-divider {
+  width: 14px;
+  height: 1px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(99, 231, 255, 0.32), rgba(99, 231, 255, 0));
+}
+
+.presence-headline {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+
+  strong {
+    display: block;
+    max-width: 136px;
+    font-size: 16px;
+    line-height: 1.05;
+    letter-spacing: -0.03em;
+    text-shadow: 0 0 10px rgba(99, 231, 255, 0.06);
+  }
+}
+
+.presence-subtext {
+  color: rgba(185, 201, 222, 0.42);
+  font-size: 9px;
+  letter-spacing: 0.06em;
 }
 
 .presence-status {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 8px;
-  border: 1px solid rgba(99, 231, 255, 0.14);
-  border-radius: 999px;
-  color: #cbd5e1;
-  background: rgba(3, 8, 20, 0.3);
+  margin-top: 1px;
+  padding: 4px 0 4px 8px;
+  border-left: 1px solid rgba(99, 231, 255, 0.14);
+  border-radius: 0;
+  color: rgba(203, 213, 225, 0.72);
+  background: transparent;
+  box-shadow: none;
   font-family: 'Fira Code', monospace;
-  font-size: 9px;
+  font-size: 7px;
+  letter-spacing: 0.16em;
   white-space: nowrap;
 
   i {
-    width: 6px;
-    height: 6px;
+    width: 5px;
+    height: 5px;
     border-radius: 50%;
     background: var(--xr-cyan);
-    box-shadow: 0 0 14px rgba(99, 231, 255, 0.88);
+    box-shadow: 0 0 12px rgba(99, 231, 255, 0.72);
   }
 }
 
 .presence-capsule {
-  min-height: 430px;
+  position: relative;
+  min-height: 0;
   display: grid;
   place-items: center;
-  overflow: hidden;
-  isolation: isolate;
+  padding: 2px 0 0;
 }
 
 .is-collapsed .presence-capsule {
@@ -399,6 +516,37 @@ const bubbleCopy = computed(() => {
   filter: blur(1px);
 }
 
+.capsule-shell {
+  position: absolute;
+  width: 214px;
+  height: 364px;
+  border-radius: 48% 48% 42% 42% / 18% 18% 24% 24%;
+  border: 1px solid rgba(226, 246, 255, 0.1);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.028), rgba(255, 255, 255, 0.01) 24%, transparent 58%),
+    radial-gradient(circle at 50% 8%, rgba(255, 255, 255, 0.08), transparent 26%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.07),
+    inset 24px 0 44px rgba(99, 231, 255, 0.03),
+    inset -16px 0 38px rgba(169, 140, 255, 0.025),
+    0 0 0 1px rgba(99, 231, 255, 0.02);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.capsule-sheen {
+  position: absolute;
+  width: 198px;
+  height: 334px;
+  border-radius: 48% 48% 42% 42% / 18% 18% 24% 24%;
+  background: linear-gradient(110deg, rgba(255, 255, 255, 0.11), rgba(255, 255, 255, 0.018) 22%, transparent 36%);
+  opacity: 0.28;
+  transform: translateX(-18px) skewX(-8deg);
+  filter: blur(1px);
+  pointer-events: none;
+  z-index: 2;
+}
+
 .scan-ring {
   position: absolute;
   border-radius: 50%;
@@ -409,44 +557,39 @@ const bubbleCopy = computed(() => {
 .ring-outer {
   width: 226px;
   height: 226px;
-  border: 1px solid rgba(99, 231, 255, 0.24);
-  border-top-color: rgba(99, 231, 255, 0.86);
-  border-right-color: rgba(169, 140, 255, 0.38);
+  border: 1px solid rgba(99, 231, 255, 0.22);
+  border-top-color: rgba(99, 231, 255, 0.82);
+  border-right-color: rgba(169, 140, 255, 0.34);
   animation: spin 22s linear infinite;
 }
 
-.ring-mid {
-  width: 176px;
-  height: 176px;
-  border: 1px dashed rgba(77, 141, 255, 0.38);
-  animation: spin 16s linear reverse infinite;
-}
-
 .ring-inner {
-  width: 118px;
-  height: 118px;
-  border: 1px solid rgba(169, 140, 255, 0.26);
-  border-left-color: rgba(99, 231, 255, 0.62);
-  animation: spin 12s linear infinite;
+  width: 146px;
+  height: 146px;
+  border: 1px solid rgba(169, 140, 255, 0.16);
+  border-left-color: rgba(99, 231, 255, 0.38);
+  border-bottom-color: rgba(169, 140, 255, 0.24);
+  animation: spin 14s linear reverse infinite;
 }
 
 .is-collapsed {
   .ring-outer { width: 48px; height: 48px; }
-  .ring-mid { width: 38px; height: 38px; }
-  .ring-inner { width: 28px; height: 28px; }
+  .ring-inner { width: 34px; height: 34px; }
   .capsule-backlight { width: 64px; height: 110px; }
+  .capsule-shell { width: 54px; height: 100px; }
+  .capsule-sheen { width: 46px; height: 92px; }
   .vertical-scan { width: 42px; height: 140px; }
   .mini-telemetry { display: none; }
 }
 
 .vertical-scan {
   position: absolute;
-  width: 184px;
-  height: 360px;
+  width: 188px;
+  height: 394px;
   border-radius: 999px;
-  border-left: 1px solid rgba(99, 231, 255, 0.18);
-  border-right: 1px solid rgba(169, 140, 255, 0.15);
-  opacity: 0.62;
+  border-left: 1px solid rgba(99, 231, 255, 0.16);
+  border-right: 1px solid rgba(169, 140, 255, 0.13);
+  opacity: 0.48;
 }
 
 .mini-telemetry {
@@ -455,7 +598,7 @@ const bubbleCopy = computed(() => {
   z-index: 5;
   display: grid;
   gap: 9px;
-  opacity: 0.38;
+  opacity: 0.17;
 
   span {
     display: block;
@@ -463,7 +606,7 @@ const bubbleCopy = computed(() => {
     height: 2px;
     border-radius: 999px;
     background: linear-gradient(90deg, transparent, var(--xr-cyan));
-    box-shadow: 0 0 10px rgba(99, 231, 255, 0.36);
+    box-shadow: 0 0 10px rgba(99, 231, 255, 0.28);
   }
 }
 
@@ -474,106 +617,240 @@ const bubbleCopy = computed(() => {
   span:nth-child(3) { width: 18px; }
 }
 
-.telemetry-right {
-  right: 12px;
-  transform: scaleX(-1);
-
-  span:nth-child(1) { width: 18px; }
-  span:nth-child(2) { width: 34px; }
-}
-
 .character-stage {
   position: relative;
   z-index: 4;
-  width: 232px;
-  height: 372px;
-  margin: 0;
-  overflow: hidden;
+  width: 218px;
+  height: 426px;
+  margin: -10px 0 -14px;
+  display: grid;
+  place-items: center;
+  overflow: visible;
   background: transparent;
   border: 0;
   border-radius: 0;
-  filter: drop-shadow(0 24px 46px rgba(0, 0, 0, 0.44));
-  transition: width 0.26s ease, height 0.26s ease;
+  filter: drop-shadow(0 18px 34px rgba(0, 0, 0, 0.28));
+  transition: width 0.26s ease, height 0.26s ease, margin 0.26s ease;
 }
 
-.is-collapsed .character-stage {
-  width: 40px;
-  height: 64px;
-  filter: drop-shadow(0 8px 14px rgba(0, 0, 0, 0.38));
+.character-frame {
+  position: relative;
+  width: 202px;
+  height: 390px;
+  padding: 10px 10px 11px;
+  border-radius: 34px 34px 30px 30px;
+  background:
+    linear-gradient(180deg, rgba(236, 248, 255, 0.18), rgba(99, 231, 255, 0.07) 18%, rgba(10, 18, 34, 0.54) 58%, rgba(5, 9, 19, 0.82) 100%);
+  border: 1px solid rgba(190, 230, 255, 0.2);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.13),
+    inset 0 0 0 1px rgba(99, 231, 255, 0.045),
+    inset 0 -18px 28px rgba(2, 6, 16, 0.12),
+    0 16px 36px rgba(0, 0, 0, 0.3),
+    0 0 20px rgba(99, 231, 255, 0.055);
 }
 
-.character-video,
-.character-fallback {
+.character-frame::before {
+  content: '';
   position: absolute;
-  inset: 0;
+  inset: 8px;
+  border-radius: 28px 28px 25px 25px;
+  border: 1px solid rgba(226, 246, 255, 0.09);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.016),
+    inset 0 18px 24px rgba(255, 255, 255, 0.02);
+  pointer-events: none;
+}
+
+.character-frame::after {
+  content: '';
+  position: absolute;
+  left: 20px;
+  right: 20px;
+  bottom: -10px;
+  height: 20px;
+  border-radius: 50%;
+  background: radial-gradient(ellipse, rgba(99, 231, 255, 0.14), rgba(77, 141, 255, 0.045) 48%, transparent 78%);
+  filter: blur(8px);
+  opacity: 0.92;
+  pointer-events: none;
+}
+
+.frame-notch {
+  position: absolute;
+  top: 112px;
+  width: 8px;
+  height: 66px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(226, 246, 255, 0.16), rgba(99, 231, 255, 0.04), rgba(3, 8, 18, 0.34));
+  opacity: 0.72;
+  pointer-events: none;
+}
+
+.frame-notch::after {
+  content: '';
+  position: absolute;
+  inset: 12px 2px;
+  border-radius: 999px;
+  background: rgba(2, 6, 16, 0.34);
+}
+
+.frame-notch-left {
+  left: -3px;
+}
+
+.frame-notch-right {
+  right: -3px;
+}
+
+.frame-spine {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 56px;
+  border-radius: 999px;
+  pointer-events: none;
+}
+
+.frame-spine-top {
+  top: 6px;
+  height: 1px;
+  background: linear-gradient(90deg, rgba(99, 231, 255, 0.02), rgba(226, 246, 255, 0.34), rgba(99, 231, 255, 0.02));
+}
+
+.frame-spine-bottom {
+  bottom: 7px;
+  height: 1px;
+  background: linear-gradient(90deg, rgba(99, 231, 255, 0.02), rgba(99, 231, 255, 0.26), rgba(99, 231, 255, 0.02));
+}
+
+.character-frame-inner {
+  position: relative;
   width: 100%;
   height: 100%;
-  object-fit: cover;
-  object-position: center top;
+  overflow: hidden;
+  border-radius: 26px 26px 23px 23px;
+  background: linear-gradient(180deg, rgba(6, 12, 24, 0.4), rgba(4, 8, 18, 0.8));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.045),
+    inset 0 -28px 44px rgba(3, 7, 18, 0.16);
 }
 
-.character-video {
-  z-index: 2;
-  filter: saturate(1.08) contrast(1.04);
-  object-position: center 8%;
-}
-
-.character-fallback {
-  z-index: 1;
-}
-
-.character-stage::after {
-  content: '';
+.frame-vignette {
   position: absolute;
   inset: 0;
   z-index: 3;
   pointer-events: none;
   background:
-    radial-gradient(circle at 50% 16%, rgba(99, 231, 255, 0.06), transparent 34%),
-    linear-gradient(180deg, transparent 58%, rgba(3, 7, 18, 0.72) 100%);
+    linear-gradient(180deg, rgba(255, 255, 255, 0.045), transparent 16%, transparent 82%, rgba(3, 7, 18, 0.12) 100%),
+    radial-gradient(circle at 50% 4%, rgba(255, 255, 255, 0.12), transparent 22%),
+    linear-gradient(90deg, rgba(3, 7, 18, 0.1), transparent 12%, transparent 88%, rgba(3, 7, 18, 0.08));
+}
+
+.is-collapsed .character-stage {
+  width: 40px;
+  height: 71px;
+  filter: drop-shadow(0 8px 14px rgba(0, 0, 0, 0.32));
+}
+
+.is-collapsed .character-frame {
+  width: 38px;
+  height: 66px;
+  padding: 3px;
+  border-radius: 14px;
+}
+
+.is-collapsed .character-frame::before,
+.is-collapsed .character-frame::after,
+.is-collapsed .frame-notch,
+.is-collapsed .frame-spine,
+.is-collapsed .frame-vignette {
+  display: none;
+}
+
+.is-collapsed .character-frame-inner {
+  border-radius: 11px;
+}
+
+.character-video {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center 7%;
+  transform: scale(1.015);
+  filter: saturate(1.01) contrast(1);
+}
+
+.character-stage::before {
+  content: '';
+  position: absolute;
+  inset: auto 38px 4px;
+  height: 34px;
+  z-index: 1;
+  pointer-events: none;
+  border-radius: 50%;
+  background: radial-gradient(ellipse, rgba(99, 231, 255, 0.12), rgba(77, 141, 255, 0.04) 48%, transparent 78%);
+  filter: blur(11px);
+}
+
+.character-stage::after {
+  content: '';
+  position: absolute;
+  top: 18px;
+  bottom: 18px;
+  left: 18px;
+  right: 18px;
+  z-index: 3;
+  pointer-events: none;
+  border-radius: 32px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.034), transparent 11%, transparent 87%, rgba(3, 7, 18, 0.1) 100%),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.022), transparent 10%, transparent 90%, rgba(255, 255, 255, 0.016));
 }
 
 .character-bubble {
   position: absolute;
-  top: 18px;
-  right: -8px;
+  top: 58px;
+  right: 16px;
   z-index: 5;
   display: flex;
   align-items: center;
   gap: 6px;
-  max-width: 180px;
-  padding: 6px 10px 6px 9px;
+  max-width: 120px;
+  padding: 5px 8px 5px 7px;
   font-family: 'PingFang SC', 'Helvetica Neue', sans-serif;
-  font-size: 11px;
-  line-height: 1.45;
+  font-size: 10px;
+  line-height: 1.28;
   color: #edf7ff;
-  letter-spacing: 0.02em;
-  background: linear-gradient(180deg, rgba(12, 22, 42, 0.92), rgba(4, 9, 20, 0.86));
-  border: 1px solid rgba(99, 231, 255, 0.32);
-  border-radius: 10px 10px 10px 2px;
+  letter-spacing: 0.01em;
+  background: linear-gradient(180deg, rgba(12, 22, 42, 0.54), rgba(4, 9, 20, 0.46));
+  border: 1px solid rgba(99, 231, 255, 0.12);
+  border-radius: 999px;
   box-shadow:
-    0 6px 18px rgba(0, 0, 0, 0.42),
-    0 0 14px rgba(99, 231, 255, 0.18);
-  backdrop-filter: blur(6px);
+    0 8px 18px rgba(0, 0, 0, 0.18),
+    0 0 8px rgba(99, 231, 255, 0.035);
+  backdrop-filter: blur(16px);
 }
 
 .character-bubble::before {
   content: '';
   position: absolute;
-  left: -6px;
-  bottom: 4px;
-  width: 8px;
-  height: 8px;
-  background: linear-gradient(135deg, rgba(12, 22, 42, 0.92), rgba(4, 9, 20, 0.86));
-  border-left: 1px solid rgba(99, 231, 255, 0.32);
-  border-bottom: 1px solid rgba(99, 231, 255, 0.32);
-  transform: rotate(45deg);
-  border-radius: 2px;
+  left: 12px;
+  bottom: -10px;
+  width: 24px;
+  height: 14px;
+  border-radius: 0 0 12px 12px;
+  background: radial-gradient(circle at 50% 0%, rgba(99, 231, 255, 0.16), transparent 74%);
+  opacity: 0.62;
+  filter: blur(0.8px);
 }
 
 .bubble-dot {
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
   border-radius: 50%;
   background: var(--xr-cyan);
   box-shadow: 0 0 8px var(--xr-cyan);
@@ -589,33 +866,33 @@ const bubbleCopy = computed(() => {
 }
 
 .bubble-thinking {
-  border-color: rgba(169, 140, 255, 0.42);
+  border-color: rgba(169, 140, 255, 0.16);
   box-shadow:
-    0 6px 18px rgba(0, 0, 0, 0.42),
-    0 0 16px rgba(169, 140, 255, 0.22);
+    0 8px 18px rgba(0, 0, 0, 0.18),
+    0 0 10px rgba(169, 140, 255, 0.05);
 
   .bubble-dot {
     background: #c4b5fd;
-    box-shadow: 0 0 10px rgba(169, 140, 255, 0.85);
+    box-shadow: 0 0 10px rgba(169, 140, 255, 0.78);
     animation-duration: 0.9s;
   }
 }
 
 .bubble-error {
-  border-color: rgba(255, 211, 122, 0.5);
+  border-color: rgba(255, 211, 122, 0.18);
   box-shadow:
-    0 6px 18px rgba(0, 0, 0, 0.42),
-    0 0 18px rgba(255, 211, 122, 0.28);
+    0 8px 18px rgba(0, 0, 0, 0.18),
+    0 0 10px rgba(255, 211, 122, 0.05);
 
   .bubble-dot {
     background: #fde68a;
-    box-shadow: 0 0 10px rgba(255, 211, 122, 0.85);
+    box-shadow: 0 0 10px rgba(255, 211, 122, 0.78);
   }
 }
 
 .bubble-offline {
   opacity: 0.7;
-  border-color: rgba(255, 255, 255, 0.16);
+  border-color: rgba(255, 255, 255, 0.12);
 
   .bubble-dot {
     background: #7f90aa;
@@ -641,14 +918,27 @@ const bubbleCopy = computed(() => {
 
 .floor-light {
   position: absolute;
-  bottom: 38px;
+  bottom: 22px;
   z-index: 3;
-  width: 196px;
-  height: 30px;
+  width: 184px;
+  height: 36px;
   border-radius: 50%;
-  background: radial-gradient(ellipse, rgba(99, 231, 255, 0.34), rgba(77, 141, 255, 0.12) 42%, transparent 70%);
-  filter: blur(1px);
+  background:
+    radial-gradient(ellipse, rgba(99, 231, 255, 0.24), rgba(77, 141, 255, 0.1) 36%, rgba(169, 140, 255, 0.06) 62%, transparent 78%);
+  filter: blur(4px);
   animation: pulse 3.8s ease-in-out infinite;
+}
+
+.floor-reflection {
+  position: absolute;
+  bottom: 14px;
+  width: 138px;
+  height: 18px;
+  border-radius: 50%;
+  background: radial-gradient(ellipse, rgba(226, 246, 255, 0.08), rgba(226, 246, 255, 0.01) 58%, transparent 80%);
+  opacity: 0.34;
+  filter: blur(4px);
+  z-index: 2;
 }
 
 .is-collapsed .floor-light {
@@ -657,37 +947,91 @@ const bubbleCopy = computed(() => {
   height: 10px;
 }
 
-.status-strip {
-  display: grid;
-  gap: 7px;
-  padding-top: 10px;
-  border-top: 1px solid rgba(99, 231, 255, 0.1);
+.is-collapsed .floor-reflection {
+  width: 30px;
+  height: 8px;
+  bottom: calc(50% - 50px);
 }
 
-.strip-row {
+.status-strip {
+  position: relative;
+  padding-top: 8px;
+}
+
+.status-base-shell {
+  position: relative;
   display: grid;
-  grid-template-columns: 38px 1fr;
+  grid-template-columns: 22px minmax(0, 1fr) 22px;
   align-items: center;
   gap: 8px;
+  padding: 10px 0 2px;
+}
+
+.base-rail {
+  position: relative;
+  display: block;
+  height: 1px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(99, 231, 255, 0.02), rgba(99, 231, 255, 0.22), rgba(99, 231, 255, 0.02));
+}
+
+.base-core {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 8px 10px 9px;
+  border-top: 1px solid rgba(99, 231, 255, 0.14);
+  border-bottom: 1px solid rgba(99, 231, 255, 0.06);
+  border-radius: 16px 16px 20px 20px;
+  background: linear-gradient(180deg, rgba(10, 18, 34, 0.18), rgba(5, 10, 21, 0.42));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.03),
+    inset 0 -10px 20px rgba(3, 7, 18, 0.14);
+}
+
+.base-core::before {
+  content: '';
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: -8px;
+  height: 14px;
+  border-radius: 50%;
+  background: radial-gradient(ellipse, rgba(99, 231, 255, 0.1), rgba(77, 141, 255, 0.03) 48%, transparent 78%);
+  filter: blur(8px);
+  opacity: 0.76;
+}
+
+.base-readout {
+  display: grid;
+  gap: 3px;
   min-width: 0;
   font-family: 'Fira Code', 'PingFang SC', monospace;
 
   span {
-    color: rgba(99, 231, 255, 0.68);
-    font-size: 10px;
-    letter-spacing: 0.1em;
+    color: rgba(99, 231, 255, 0.42);
+    font-size: 7px;
+    letter-spacing: 0.18em;
   }
 
   strong {
     min-width: 0;
-    color: var(--xr-soft);
-    font-size: 10.5px;
+    color: rgba(237, 247, 255, 0.78);
+    font-size: 9px;
     font-weight: 500;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    text-align: right;
   }
+}
+
+.base-divider {
+  width: 1px;
+  height: 24px;
+  background: linear-gradient(180deg, rgba(99, 231, 255, 0.02), rgba(99, 231, 255, 0.2), rgba(99, 231, 255, 0.04));
 }
 
 .collapsed-pulse {
@@ -707,11 +1051,10 @@ const bubbleCopy = computed(() => {
 }
 
 .thinking {
-  .ring-outer { animation-duration: 8s; border-top-color: rgba(169, 140, 255, 0.92); }
-  .ring-mid { animation-duration: 6s; }
-  .ring-inner { animation-duration: 5s; }
+  .ring-outer { animation-duration: 8s; border-top-color: rgba(169, 140, 255, 0.88); }
+  .ring-inner { animation-duration: 7s; }
   .character-stage { animation: breathe 1.7s ease-in-out infinite; }
-  .mini-telemetry { opacity: 0.76; }
+  .mini-telemetry { opacity: 0.36; }
   .floor-light { animation-duration: 1.55s; }
   .presence-status i { animation: blink 1.2s ease-in-out infinite; }
   .collapsed-pulse .pulse-dot { animation-duration: 0.7s; }
@@ -719,7 +1062,6 @@ const bubbleCopy = computed(() => {
 
 .loading {
   .ring-outer { animation-duration: 12s; }
-  .ring-mid { animation-duration: 9s; }
   .character-stage { animation: breathe 2.4s ease-in-out infinite; }
   .floor-light { animation-duration: 2.2s; }
 }
@@ -727,15 +1069,15 @@ const bubbleCopy = computed(() => {
 .error {
   .presence-status {
     color: #fde68a;
-    border-color: rgba(255, 211, 122, 0.32);
+    border-color: rgba(255, 211, 122, 0.24);
 
     i {
       background: var(--xr-warning);
-      box-shadow: 0 0 13px rgba(255, 211, 122, 0.78);
+      box-shadow: 0 0 13px rgba(255, 211, 122, 0.74);
     }
   }
 
-  .ring-outer { border-top-color: rgba(255, 211, 122, 0.78); }
+  .ring-outer { border-top-color: rgba(255, 211, 122, 0.74); }
 
   .collapsed-pulse .pulse-dot {
     background: var(--xr-warning);
@@ -748,17 +1090,19 @@ const bubbleCopy = computed(() => {
 
   .presence-status {
     color: #fecaca;
-    border-color: rgba(251, 113, 133, 0.28);
+    border-color: rgba(251, 113, 133, 0.2);
 
     i {
       background: var(--xr-danger);
-      box-shadow: 0 0 12px rgba(251, 113, 133, 0.72);
+      box-shadow: 0 0 12px rgba(251, 113, 133, 0.68);
     }
   }
 
   .scan-ring,
   .mini-telemetry,
-  .floor-light { opacity: 0.18; }
+  .floor-light,
+  .floor-reflection,
+  .character-seat-glow { opacity: 0.18; }
 
   .collapsed-pulse .pulse-dot {
     background: var(--xr-danger);
@@ -771,11 +1115,11 @@ const bubbleCopy = computed(() => {
 }
 
 @keyframes breathe {
-  50% { transform: translateY(-5px) scale(1.018); }
+  50% { transform: translateY(-4px) scale(1.012); }
 }
 
 @keyframes pulse {
-  50% { opacity: 0.55; transform: scaleX(0.86); }
+  50% { opacity: 0.52; transform: scaleX(0.88); }
 }
 
 @keyframes blink {
@@ -805,12 +1149,44 @@ const bubbleCopy = computed(() => {
   }
 
   .ring-outer { width: 155px; height: 155px; }
-  .ring-mid { width: 112px; height: 112px; }
-  .ring-inner { width: 76px; height: 76px; }
+  .ring-inner { width: 96px; height: 96px; }
+
+  .capsule-shell {
+    width: 98px;
+    height: 184px;
+  }
+
+  .capsule-sheen {
+    width: 92px;
+    height: 168px;
+  }
 
   .character-stage {
     width: 92px;
-    height: 170px;
+    height: 164px;
+  }
+
+  .character-frame {
+    width: 84px;
+    height: 146px;
+    padding: 4px;
+    border-radius: 18px;
+  }
+
+  .character-frame::before,
+  .character-frame::after,
+  .frame-notch,
+  .frame-spine,
+  .frame-vignette {
+    display: none;
+  }
+
+  .character-frame-inner {
+    border-radius: 14px;
+  }
+
+  .character-video {
+    object-position: center 9%;
   }
 
   .vertical-scan {
@@ -821,6 +1197,11 @@ const bubbleCopy = computed(() => {
   .floor-light {
     width: 96px;
     bottom: calc(50% - 96px);
+  }
+
+  .floor-reflection {
+    width: 54px;
+    bottom: calc(50% - 104px);
   }
 }
 </style>
