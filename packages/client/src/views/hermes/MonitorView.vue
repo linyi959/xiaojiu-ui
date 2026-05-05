@@ -36,16 +36,18 @@ const tooltip = ref({ visible: false, x: 0, y: 0, date: '', sessions: 0 })
 function onChartHover(e: MouseEvent) {
   const svg = (e.currentTarget as SVGElement)
   const rect = svg.getBoundingClientRect()
-  const svgWidth = rect.width
-  const ratio = e.clientX - rect.left
+  const scaleX = 864 / rect.width   // convert pixel → SVG coordinate
   const pts = activityDays.value
   if (!pts.length) return
-  const idx = Math.round((ratio / svgWidth) * (pts.length - 1))
+  const svgX = (e.clientX - rect.left) * scaleX
+  const idx = Math.round((svgX / 864) * (pts.length - 1))
   const pt = pts[Math.max(0, Math.min(idx, pts.length - 1))]
+  // Position tooltip in pixel space, offset from cursor
+  const pixelX = (pt.x / 864) * rect.width
   tooltip.value = {
     visible: true,
-    x: e.clientX - rect.left + 10,
-    y: e.clientY - rect.top - 40,
+    x: pixelX,
+    y: 20,
     date: pt.date,
     sessions: pt.sessions,
   }
@@ -147,7 +149,9 @@ const outerTicks = computed(() => {
   })
 })
 
-// ── Activity chart ─────────────────────────────────────────────────────────
+// ── Activity chart — uses 864×120 coordinate space (864w = 30 days × 28.8px, 120h)
+// This stays fixed regardless of container width; SVG viewBox="0 0 864 120"
+// with preserveAspectRatio="none" handles responsive scaling.
 const activityDays = computed(() => {
   const days = usageStore.dailyUsage.slice(-30)
   if (!days.length) return []
@@ -155,8 +159,8 @@ const activityDays = computed(() => {
   return days.map((d, i) => ({
     ...d,
     pct: (d.sessions / maxSessions) * 100,
-    x: days.length <= 1 ? 50 : (i / (days.length - 1)) * 100,
-    y: 100 - (d.sessions / maxSessions) * 92,
+    x: days.length <= 1 ? 432 : (i / (days.length - 1)) * 864,
+    y: 120 - (d.sessions / maxSessions) * 108,  // bottom 12px padding
     hasError: d.errors > 0,
   }))
 })
@@ -164,11 +168,11 @@ const activityDays = computed(() => {
 const areaPathD = computed(() => {
   const pts = activityDays.value
   if (!pts.length) return ''
-  const bottom = 98
+  const BOTTOM = 118
   const line = pts.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ')
   const last = pts[pts.length - 1]
   const first = pts[0]
-  return `${line} L ${last.x.toFixed(1)} ${bottom} L ${first.x.toFixed(1)} ${bottom} Z`
+  return `${line} L ${last.x.toFixed(1)} ${BOTTOM} L ${first.x.toFixed(1)} ${BOTTOM} Z`
 })
 
 const linePathD = computed(() => {
@@ -177,10 +181,12 @@ const linePathD = computed(() => {
   return pts.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ')
 })
 
+// 5 ticks: first, ~1/4, mid, ~3/4, last
 const chartTicks = computed(() => {
   const pts = activityDays.value
   if (!pts.length) return []
-  return [pts[0], pts[Math.floor(pts.length / 2)], pts[pts.length - 1]]
+  const idxs = [0, Math.floor(pts.length * 0.25), Math.floor(pts.length * 0.5), Math.floor(pts.length * 0.75), pts.length - 1]
+  return idxs.map(i => pts[i])
 })
 
 const totalSessions = computed(() => activityDays.value.reduce((s, d) => s + d.sessions, 0))
@@ -561,69 +567,103 @@ onUnmounted(() => {
         <div class="stream-chart">
           <svg
             class="chart-svg"
-            viewBox="0 0 100 100"
+            viewBox="0 0 864 120"
             preserveAspectRatio="none"
             aria-hidden="true"
             @mousemove="onChartHover"
             @mouseleave="onChartLeave"
           >
             <defs>
+              <!-- Area gradient: top → bottom, disappears at base -->
               <linearGradient id="chartGrad" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stop-color="#67e8f9" stop-opacity="0.3" />
-                <stop offset="100%" stop-color="#67e8f9" stop-opacity="0.01" />
+                <stop offset="0%"   stop-color="#67e8f9" stop-opacity="0.22" />
+                <stop offset="65%"  stop-color="#67e8f9" stop-opacity="0.08" />
+                <stop offset="100%" stop-color="#67e8f9" stop-opacity="0" />
               </linearGradient>
-              <!-- Glow filter for flowing line -->
-              <filter id="lineGlow" x="-20%" y="-100%" width="140%" height="300%">
-                <feGaussianBlur in="SourceGraphic" stdDeviation="1.2" result="blur" />
+              <!-- Edge fade mask — left/right soft vignette for the area -->
+              <linearGradient id="areaFadeL" x1="0" y1="0" x2="1" y2="0">
+                <stop offset="0%"   stop-color="white" stop-opacity="0" />
+                <stop offset="100%" stop-color="white" stop-opacity="1" />
+              </linearGradient>
+              <linearGradient id="areaFadeR" x1="0" y1="0" x2="1" y2="0">
+                <stop offset="0%"   stop-color="white" stop-opacity="1" />
+                <stop offset="100%" stop-color="white" stop-opacity="0" />
+              </linearGradient>
+              <mask id="areaMask">
+                <rect x="0" y="0" width="864" height="120" fill="url(#areaFadeR)" />
+                <rect x="0" y="0" width="864" height="120" fill="url(#areaFadeL)" />
+              </mask>
+              <!-- Sharp glow for the thin static line -->
+              <filter id="lineGlow" x="-5%" y="-50%" width="110%" height="200%">
+                <feGaussianBlur in="SourceGraphic" stdDeviation="0.8" result="blur" />
+                <feMerge>
+                  <feMergeNode in="blur" />
+                  <feMergeNode in="SourceGraphic" />
+                </feMerge>
+              </filter>
+              <!-- Softer glow for the flow pulse -->
+              <filter id="flowGlow" x="-10%" y="-100%" width="120%" height="300%">
+                <feGaussianBlur in="SourceGraphic" stdDeviation="1.5" result="blur" />
                 <feMerge>
                   <feMergeNode in="blur" />
                   <feMergeNode in="SourceGraphic" />
                 </feMerge>
               </filter>
             </defs>
-            <!-- Grid -->
-            <line x1="0" y1="25" x2="100" y2="25" stroke="rgba(168,216,255,0.06)" stroke-width="0.3" />
-            <line x1="0" y1="50" x2="100" y2="50" stroke="rgba(168,216,255,0.06)" stroke-width="0.3" />
-            <line x1="0" y1="75" x2="100" y2="75" stroke="rgba(168,216,255,0.06)" stroke-width="0.3" />
-            <!-- Area — draws in with stroke-dashoffset -->
+
+            <!-- ── Precision grid ── -->
+            <!-- Horizontal rules: y=24/48/72/96 (every 24 units = ~20% height) -->
+            <line x1="0" y1="24" x2="864" y2="24" stroke="rgba(168,216,255,0.04)" stroke-width="0.8" />
+            <line x1="0" y1="48" x2="864" y2="48" stroke="rgba(168,216,255,0.06)" stroke-width="0.8" />
+            <line x1="0" y1="72" x2="864" y2="72" stroke="rgba(168,216,255,0.04)" stroke-width="0.8" />
+            <line x1="0" y1="96" x2="864" y2="96" stroke="rgba(168,216,255,0.06)" stroke-width="0.8" />
+            <!-- Baseline -->
+            <line x1="0" y1="118" x2="864" y2="118" stroke="rgba(168,216,255,0.12)" stroke-width="0.8" />
+
+            <!-- ── Area fill with edge fade ── -->
             <path
               v-if="areaPathD"
               :d="areaPathD"
               fill="url(#chartGrad)"
               class="chart-area"
+              mask="url(#areaMask)"
               :key="chartAnimKey"
             />
-            <!-- Line — draws in with stroke-dashoffset -->
+
+            <!-- ── Static base line — razor thin with glow ── -->
             <path
               v-if="linePathD"
               :d="linePathD"
               fill="none"
               stroke="#67e8f9"
-              stroke-width="0.3"
+              stroke-width="0.35"
               stroke-linecap="round"
-              stroke-opacity="0.85"
+              stroke-opacity="0.8"
               class="chart-line"
               :key="chartAnimKey"
               filter="url(#lineGlow)"
             />
-            <!-- Flowing travel dash — layered on top of the static thin line -->
+
+            <!-- ── Traveling flow pulse — shorter, slower, softer glow ── -->
             <path
               v-if="linePathD"
               :d="linePathD"
               fill="none"
               stroke="#a8d8ff"
-              stroke-width="0.6"
+              stroke-width="0.5"
               stroke-linecap="round"
-              stroke-opacity="0.6"
+              stroke-opacity="0.55"
               class="chart-flow-line"
               :key="chartAnimKey"
+              filter="url(#flowGlow)"
             />
-            <!-- Error dots -->
+
+            <!-- ── Error markers — tiny, precise ── -->
             <circle
               v-for="(pt, i) in activityDays.filter(p => p.hasError)"
               :key="i"
-              :cx="pt.x.toFixed(1)" :cy="pt.y.toFixed(1)" r="2"
-              fill="#f87171" fill-opacity="0.9"
+              :cx="pt.x.toFixed(1)" :cy="pt.y.toFixed(1)" r="2.5"
+              fill="#f87171" fill-opacity="0.85"
             />
           </svg>
           <div class="chart-ticks">
@@ -1224,25 +1264,24 @@ $text-dim: #3d5a80;
 
 // ─── Chart draw-in animation ─────────────────────────────────────────────────
 /*
- * Two-layer line effect:
- *  1. chart-line   — static thin line (stroke-width 0.7) with glow filter
- *  2. chart-flow-line — same path, dasharray 60/240, animated to travel continuously
+ * Coordinate space: SVG viewBox="0 0 864 120"
+ * chart-line stroke-dashoffset/dasharray reference: 864 (total path length)
  */
 .chart-line {
-  stroke-dasharray: 300;
-  stroke-dashoffset: 300;
+  stroke-dasharray: 864;
+  stroke-dashoffset: 864;
   animation: chartDrawIn 1.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
 .chart-flow-line {
-  stroke-dasharray: 60 240;  /* 60px bright dash, 240px gap */
-  stroke-dashoffset: 300;   /* starts fully hidden */
-  animation: chartFlow 2.5s linear 1.2s infinite; /* travels right→left, loops */
+  stroke-dasharray: 36 180;   /* 36px bright dash, 180px gap — shorter pulse */
+  stroke-dashoffset: 216;    /* starts hidden (36+180) */
+  animation: chartFlow 5s linear 1.2s infinite;
 }
 
 .chart-area {
   opacity: 0;
-  animation: chartFadeIn 0.6s ease forwards;
+  animation: chartFadeIn 0.7s ease forwards;
 }
 
 @keyframes chartDrawIn {
@@ -1253,10 +1292,10 @@ $text-dim: #3d5a80;
   to { opacity: 1; }
 }
 
-/* Traveling dash — offset goes from 300 (hidden) → -60 (off-screen left) */
+/* Traveling dash: offset goes 216 → -36 (36px dash exits left edge) */
 @keyframes chartFlow {
-  from { stroke-dashoffset: 300; }
-  to   { stroke-dashoffset: -60; }
+  from { stroke-dashoffset: 216; }
+  to   { stroke-dashoffset: -36; }
 }
 
 // ─── Background scan-line ────────────────────────────────────────────────────
@@ -1366,28 +1405,38 @@ $text-dim: #3d5a80;
 
 .chart-tooltip {
   position: absolute;
-  background: rgba(4, 8, 16, 0.95);
-  border: 1px solid rgba(103, 232, 249, 0.25);
-  border-radius: 8px;
-  padding: 6px 10px;
+  top: 20px;
+  transform: translateX(-50%);
+  background: rgba(4, 8, 16, 0.92);
+  border: 1px solid rgba(103, 232, 249, 0.2);
+  border-radius: 10px;
+  padding: 7px 12px;
   pointer-events: none;
   z-index: 10;
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  backdrop-filter: blur(8px);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  align-items: center;
+  gap: 3px;
+  backdrop-filter: blur(12px);
+  box-shadow:
+    0 0 0 1px rgba(103, 232, 249, 0.06) inset,
+    0 8px 24px rgba(0, 0, 0, 0.6);
+  white-space: nowrap;
 }
 
 .ct-date {
+  font-family: 'Fira Code', 'Courier New', monospace;
   font-size: 9px;
-  color: $text-dim;
+  color: rgba(122, 156, 191, 0.8);
+  letter-spacing: 0.05em;
 }
 
 .ct-sessions {
-  font-size: 11px;
-  color: $cyan;
-  font-variant-numeric: tabular-nums;
+  font-family: 'Fira Code', 'Courier New', monospace;
+  font-size: 12px;
+  font-weight: 600;
+  color: #67e8f9;
+  letter-spacing: 0.02em;
 }
 
 // ─── Mid Grid ───────────────────────────────────────────────────────────────
