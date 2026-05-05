@@ -572,6 +572,14 @@ onUnmounted(() => {
                 <stop offset="0%" stop-color="#67e8f9" stop-opacity="0.3" />
                 <stop offset="100%" stop-color="#67e8f9" stop-opacity="0.01" />
               </linearGradient>
+              <!-- Glow filter for flowing line -->
+              <filter id="lineGlow" x="-20%" y="-100%" width="140%" height="300%">
+                <feGaussianBlur in="SourceGraphic" stdDeviation="1.2" result="blur" />
+                <feMerge>
+                  <feMergeNode in="blur" />
+                  <feMergeNode in="SourceGraphic" />
+                </feMerge>
+              </filter>
             </defs>
             <!-- Grid -->
             <line x1="0" y1="25" x2="100" y2="25" stroke="rgba(168,216,255,0.06)" stroke-width="0.3" />
@@ -591,10 +599,23 @@ onUnmounted(() => {
               :d="linePathD"
               fill="none"
               stroke="#67e8f9"
+              stroke-width="0.7"
+              stroke-linecap="round"
+              stroke-opacity="0.85"
+              class="chart-line"
+              :key="chartAnimKey"
+              filter="url(#lineGlow)"
+            />
+            <!-- Flowing travel dash — layered on top of the static thin line -->
+            <path
+              v-if="linePathD"
+              :d="linePathD"
+              fill="none"
+              stroke="#a8d8ff"
               stroke-width="1.5"
               stroke-linecap="round"
-              stroke-opacity="0.9"
-              class="chart-line"
+              stroke-opacity="0.6"
+              class="chart-flow-line"
               :key="chartAnimKey"
             />
             <!-- Error dots -->
@@ -1202,16 +1223,26 @@ $text-dim: #3d5a80;
 }
 
 // ─── Chart draw-in animation ─────────────────────────────────────────────────
+/*
+ * Two-layer line effect:
+ *  1. chart-line   — static thin line (stroke-width 0.7) with glow filter
+ *  2. chart-flow-line — same path, dasharray 60/240, animated to travel continuously
+ */
 .chart-line {
   stroke-dasharray: 300;
   stroke-dashoffset: 300;
   animation: chartDrawIn 1.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
+.chart-flow-line {
+  stroke-dasharray: 60 240;  /* 60px bright dash, 240px gap */
+  stroke-dashoffset: 300;   /* starts fully hidden */
+  animation: chartFlow 2.5s linear 1.2s infinite; /* travels right→left, loops */
+}
+
 .chart-area {
   opacity: 0;
   animation: chartFadeIn 0.6s ease forwards;
-  animation-delay: 0.8s;
 }
 
 @keyframes chartDrawIn {
@@ -1220,6 +1251,12 @@ $text-dim: #3d5a80;
 
 @keyframes chartFadeIn {
   to { opacity: 1; }
+}
+
+/* Traveling dash — offset goes from 300 (hidden) → -60 (off-screen left) */
+@keyframes chartFlow {
+  from { stroke-dashoffset: 300; }
+  to   { stroke-dashoffset: -60; }
 }
 
 // ─── Background scan-line ────────────────────────────────────────────────────

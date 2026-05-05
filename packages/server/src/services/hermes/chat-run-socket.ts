@@ -916,6 +916,8 @@ export class ChatRunSocket {
                       timestamp: Math.floor(Date.now() / 1000),
                     })
                   }
+                  // Also emit to client so the UI can build thinking phases
+                  emit(parsed.event, { event: parsed.event, text })
                   break
                 }
                 case 'tool.started': {
