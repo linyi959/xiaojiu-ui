@@ -30,6 +30,31 @@ const animStarted = ref(false)
 const chartAnimKey = ref(0) // increments to retrigger SVG stroke-dashoffset animation
 let animFrame: number
 
+// Chart tooltip
+const tooltip = ref({ visible: false, x: 0, y: 0, date: '', sessions: 0 })
+
+function onChartHover(e: MouseEvent) {
+  const svg = (e.currentTarget as SVGElement)
+  const rect = svg.getBoundingClientRect()
+  const svgWidth = rect.width
+  const ratio = e.clientX - rect.left
+  const pts = activityDays.value
+  if (!pts.length) return
+  const idx = Math.round((ratio / svgWidth) * (pts.length - 1))
+  const pt = pts[Math.max(0, Math.min(idx, pts.length - 1))]
+  tooltip.value = {
+    visible: true,
+    x: e.clientX - rect.left + 10,
+    y: e.clientY - rect.top - 40,
+    date: pt.date,
+    sessions: pt.sessions,
+  }
+}
+
+function onChartLeave() {
+  tooltip.value.visible = false
+}
+
 function easeOutCubic(t: number) { return 1 - Math.pow(1 - t, 3) }
 
 function useCountUp(to: number, ms: number, cb: (v: number) => void) {
@@ -233,6 +258,11 @@ const skillStats = computed(() => {
 const topSkills = computed(() => {
   const all = skills.value.categories.flatMap(c => c.skills)
   return all.sort((a: any, b: any) => (b.useCount ?? 0) - (a.useCount ?? 0)).slice(0, 5)
+})
+
+const topSkillMax = computed(() => {
+  const vals = topSkills.value.map((sk: any) => sk.useCount ?? 0)
+  return Math.max(...vals, 1)
 })
 
 // ── Channels ──────────────────────────────────────────────────────────────
@@ -529,7 +559,14 @@ onUnmounted(() => {
         </div>
 
         <div class="stream-chart">
-          <svg class="chart-svg" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+          <svg
+            class="chart-svg"
+            viewBox="0 0 100 100"
+            preserveAspectRatio="none"
+            aria-hidden="true"
+            @mousemove="onChartHover"
+            @mouseleave="onChartLeave"
+          >
             <defs>
               <linearGradient id="chartGrad" x1="0" y1="0" x2="0" y2="1">
                 <stop offset="0%" stop-color="#67e8f9" stop-opacity="0.3" />
@@ -570,6 +607,15 @@ onUnmounted(() => {
           </svg>
           <div class="chart-ticks">
             <span v-for="tick in chartTicks" :key="tick.date">{{ tick.date?.slice(5) }}</span>
+          </div>
+          <!-- Chart hover tooltip -->
+          <div
+            v-if="tooltip.visible"
+            class="chart-tooltip"
+            :style="{ left: tooltip.x + 'px', top: tooltip.y + 'px' }"
+          >
+            <span class="ct-date">{{ tooltip.date?.slice(5) }}</span>
+            <span class="ct-sessions">{{ tooltip.sessions }} sessions</span>
           </div>
         </div>
       </article>
@@ -706,7 +752,14 @@ onUnmounted(() => {
             <div v-for="(sk, i) in topSkills" :key="sk.name" class="sr-row">
               <span class="sr-rank">{{ i + 1 }}</span>
               <span class="sr-name">{{ sk.name }}</span>
-              <span class="sr-count">{{ fmt((sk as any).call_count ?? 0) }}</span>
+              <!-- skill usage progress bar -->
+              <div class="sr-bar-track">
+                <div
+                  class="sr-bar-fill"
+                  :style="{ width: ((sk.useCount ?? 0) / topSkillMax * 100).toFixed(1) + '%' }"
+                />
+              </div>
+              <span class="sr-count">{{ fmt((sk as any).useCount ?? 0) }}</span>
             </div>
           </div>
         </div>
@@ -734,7 +787,7 @@ onUnmounted(() => {
     </section>
 
     <!-- ═══════════════════════════════════════════════════════ EVENT LOG -->
-    <section class="event-log">
+    <section class="event-log entrance-log">
       <div class="panel-cap log-cap">
         <span class="cap-label">RECENT EVENTS</span>
         <span class="cap-sub">{{ lastUpdated ? `Updated ${lastUpdated}` : '' }}</span>
@@ -997,6 +1050,11 @@ $text-dim: #3d5a80;
   &.entrance-3 { animation: fadeSlideIn 480ms cubic-bezier(0.16, 1, 0.3, 1) both; animation-delay: 220ms; }
   &.entrance-4 { animation: fadeSlideIn 480ms cubic-bezier(0.16, 1, 0.3, 1) both; animation-delay: 300ms; }
   &.entrance-5 { animation: fadeSlideIn 480ms cubic-bezier(0.16, 1, 0.3, 1) both; animation-delay: 380ms; }
+}
+
+.entrance-log {
+  animation: fadeSlideIn 480ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation-delay: 500ms;
 }
 
 // ─── Panel Base ─────────────────────────────────────────────────────────────
@@ -1266,6 +1324,32 @@ $text-dim: #3d5a80;
   justify-content: space-between;
   font-size: 9px;
   color: $text-dim;
+  font-variant-numeric: tabular-nums;
+}
+
+.chart-tooltip {
+  position: absolute;
+  background: rgba(4, 8, 16, 0.95);
+  border: 1px solid rgba(103, 232, 249, 0.25);
+  border-radius: 8px;
+  padding: 6px 10px;
+  pointer-events: none;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  backdrop-filter: blur(8px);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+}
+
+.ct-date {
+  font-size: 9px;
+  color: $text-dim;
+}
+
+.ct-sessions {
+  font-size: 11px;
+  color: $cyan;
   font-variant-numeric: tabular-nums;
 }
 
@@ -1565,6 +1649,7 @@ $text-dim: #3d5a80;
   padding: 5px 6px;
   border-radius: 7px;
   background: rgba(0,0,0,0.2);
+  overflow: hidden;
 }
 
 .sr-rank {
@@ -1589,6 +1674,30 @@ $text-dim: #3d5a80;
   color: $cyan;
   font-variant-numeric: tabular-nums;
   flex-shrink: 0;
+  margin-left: 4px;
+}
+
+.sr-bar-track {
+  flex: 1;
+  height: 4px;
+  background: rgba(168, 216, 255, 0.1);
+  border-radius: 999px;
+  overflow: hidden;
+  min-width: 40px;
+}
+
+.sr-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, rgba(103, 232, 249, 0.6), $cyan);
+  border-radius: 999px;
+  transition: width 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+// ─── Panel inner glow (gives depth — feels like an embedded chamber) ──────────
+.panel {
+  box-shadow:
+    inset 0 0 40px rgba(103, 232, 249, 0.018),
+    0 4px 24px rgba(0, 0, 0, 0.35);
 }
 
 // ─── Channel Panel ──────────────────────────────────────────────────────────
