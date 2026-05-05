@@ -34,32 +34,39 @@ let animFrame: number
 const tooltip = ref({ visible: false, x: 0, y: 0, date: '', sessions: 0 })
 
 // Chart crosshair — vertical line + dot following mouse
-const crosshair = ref({ visible: false, x: 0, y: 0, svgX: 0, svgMouseX: 0 })
+const crosshair = ref({ visible: false, x: 0, y: 0, svgX: 0, svgY: 0, svgMouseX: 0 })
 
 function onChartHover(e: MouseEvent) {
   const svg = (e.currentTarget as SVGElement)
   const rect = svg.getBoundingClientRect()
   const scaleX = 864 / rect.width
   const pixelX = e.clientX - rect.left
-  const pixelY = e.clientY - rect.top
   const pts = activityDays.value
   if (!pts.length) return
-  const svgX = pixelX * scaleX
-  const idx = Math.round((svgX / 864) * (pts.length - 1))
+
+  // Exact mouse position in SVG units (for the vertical crosshair line)
+  const mouseSvgX = pixelX * scaleX
+  // Nearest data point (snapped)
+  const idx = Math.round((mouseSvgX / 864) * (pts.length - 1))
   const pt = pts[Math.max(0, Math.min(idx, pts.length - 1))]
+
+  // Tooltip — centered above the data point (in pixel space)
   tooltip.value = {
     visible: true,
-    x: pixelX,
+    x: (pt.x / 864) * rect.width,
     y: 20,
     date: pt.date,
     sessions: pt.sessions,
   }
+
+  // Crosshair — vertical line follows exact mouse, dot snaps to data point
   crosshair.value = {
     visible: true,
     x: pixelX,
-    y: pixelY,
-    svgX: pt.x,      // snapped data-point x in SVG units — for halo ring
-    svgMouseX: svgX, // exact mouse x in SVG units — for the vertical line
+    y: 0,
+    svgX: pt.x,         // snapped data-point x — for dot + connector
+    svgY: pt.y,         // snapped data-point y
+    svgMouseX: mouseSvgX, // exact mouse x — for the vertical dashed line
   }
 }
 
@@ -612,9 +619,17 @@ onUnmounted(() => {
                   <feMergeNode in="SourceGraphic" />
                 </feMerge>
               </filter>
-              <!-- Softer glow for the flow pulse -->
+              <!-- Glow for the flow pulse -->
               <filter id="flowGlow" x="-10%" y="-100%" width="120%" height="300%">
                 <feGaussianBlur in="SourceGraphic" stdDeviation="1.5" result="blur" />
+                <feMerge>
+                  <feMergeNode in="blur" />
+                  <feMergeNode in="SourceGraphic" />
+                </feMerge>
+              </filter>
+              <!-- Strong glow for the data point dot -->
+              <filter id="pointGlow" x="-100%" y="-100%" width="300%" height="300%">
+                <feGaussianBlur in="SourceGraphic" stdDeviation="2.5" result="blur" />
                 <feMerge>
                   <feMergeNode in="blur" />
                   <feMergeNode in="SourceGraphic" />
@@ -677,26 +692,34 @@ onUnmounted(() => {
               fill="#f87171" fill-opacity="0.85"
             />
 
-            <!-- ── Crosshair — follows mouse, shows nearest data point ── -->
+            <!-- ── Crosshair: dashed vertical line tracks mouse, dot snaps to nearest data point ── -->
             <template v-if="crosshair.visible">
-              <!-- Vertical hair line — follows exact mouse x in SVG units -->
+              <!-- Vertical dashed hair — follows exact mouse x in SVG units -->
               <line
                 :x1="crosshair.svgMouseX.toFixed(1)"
                 y1="0"
                 :x2="crosshair.svgMouseX.toFixed(1)"
                 y2="120"
-                stroke="rgba(168,216,255,0.2)"
+                stroke="rgba(168,216,255,0.18)"
                 stroke-width="0.5"
-                stroke-dasharray="3 3"
+                stroke-dasharray="3 4"
               />
-              <!-- Nearest data point halo ring — svgX is the snapped data point x in SVG units -->
+              <!-- Data point dot — snaps to pt.x/pt.y, has a glow halo -->
               <circle
                 :cx="crosshair.svgX.toFixed(1)"
-                cy="0"
-                r="5"
-                fill="rgba(103,232,249,0.12)"
-                stroke="#67e8f9"
-                stroke-width="0.6"
+                :cy="crosshair.svgY.toFixed(1)"
+                r="3"
+                fill="#67e8f9"
+                filter="url(#pointGlow)"
+              />
+              <!-- Thin connector from dot up to tooltip zone (tooltip is ~20px from top) -->
+              <line
+                :x1="crosshair.svgX.toFixed(1)"
+                :y1="crosshair.svgY.toFixed(1)"
+                :x2="crosshair.svgX.toFixed(1)"
+                y2="12"
+                stroke="rgba(103,232,249,0.25)"
+                stroke-width="0.5"
               />
             </template>
           </svg>
