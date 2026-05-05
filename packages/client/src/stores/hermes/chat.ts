@@ -19,6 +19,27 @@ export interface Attachment {
   file?: File
 }
 
+export interface Phase {
+  id: string
+  // 'thinking' | 'tool_call' | 'tool_result' | 'final'
+  type: 'thinking' | 'tool_call' | 'tool_result' | 'final'
+  // 内容：thinking=推理文本，tool_call=工具名，tool_result=返回内容，final=最终回复
+  content: string
+  // 工具调用相关字段
+  toolName?: string
+  toolArgs?: string
+  toolPreview?: string
+  toolResult?: string
+  toolStatus?: 'running' | 'done' | 'error'
+  toolDuration?: number
+  // 流式状态
+  isStreaming?: boolean
+  // 折叠状态（用户可折叠）
+  collapsed?: boolean
+  // 时间戳
+  timestamp?: number
+}
+
 export interface Message {
   id: string
   role: 'user' | 'assistant' | 'system' | 'tool'
@@ -37,6 +58,9 @@ export interface Message {
   //   2) 流式：由 reasoning.delta / thinking.delta / reasoning.available 事件累加
   // 不含 <think> 包裹标签；内容自身可以为多段纯文本。
   reasoning?: string
+  // Inline phases: 思维链路阶段（思考→工具调用→思考→工具调用→最终输出）
+  // 流式过程中逐步累加，渲染时 inline 显示在消息内部
+  phases?: Phase[]
 }
 
 export interface Session {
@@ -774,12 +798,37 @@ export const useChatStore = defineStore('chat', () => {
               if (!text) break
               runProducedAssistantText = true
               const msgs = getSessionMsgs(sid)
-              const last = msgs[msgs.length - 1]
-              if (last?.role === 'assistant' && last.isStreaming) {
-                last.reasoning = (last.reasoning || '') + text
-                noteReasoningStart(last.id)
+              let assistantMsg = msgs[msgs.length - 1]
+
+              if (assistantMsg?.role === 'assistant' && assistantMsg.isStreaming) {
+                // 追加到 reasoning 字段（保留旧字段兼容）
+                assistantMsg.reasoning = (assistantMsg.reasoning || '') + text
+                noteReasoningStart(assistantMsg.id)
+                // 同时更新或创建 thinking phase
+                if (!assistantMsg.phases) assistantMsg.phases = []
+                const phases = assistantMsg.phases
+                const lastPhase = phases[phases.length - 1]
+                if (lastPhase && lastPhase.type === 'thinking' && lastPhase.isStreaming) {
+                  lastPhase.content += text
+                } else {
+                  // 创建新的 thinking phase
+                  phases.push({
+                    id: uid(),
+                    type: 'thinking',
+                    content: text,
+                    isStreaming: true,
+                    timestamp: Date.now(),
+                  })
+                }
               } else {
                 const newId = uid()
+                const thinkingPhase: Phase = {
+                  id: uid(),
+                  type: 'thinking',
+                  content: text,
+                  isStreaming: true,
+                  timestamp: Date.now(),
+                }
                 addMessage(sid, {
                   id: newId,
                   role: 'assistant',
@@ -787,6 +836,7 @@ export const useChatStore = defineStore('chat', () => {
                   timestamp: Date.now(),
                   isStreaming: true,
                   reasoning: text,
+                  phases: [thinkingPhase],
                 })
                 noteReasoningStart(newId)
               }
@@ -806,6 +856,13 @@ export const useChatStore = defineStore('chat', () => {
                 // 只有当 reasoning.delta 事件曾经启动过计时，才标记结束；
                 // 否则（上游未转发 delta，只发这一次 available）不显示时长。
                 noteReasoningEnd(last.id)
+                // 标记最后一个 thinking phase 为已结束
+                if (last.phases && last.phases.length > 0) {
+                  const lastPhase = last.phases[last.phases.length - 1]
+                  if (lastPhase.type === 'thinking' && lastPhase.isStreaming) {
+                    lastPhase.isStreaming = false
+                  }
+                }
               }
 
               break
@@ -822,16 +879,39 @@ export const useChatStore = defineStore('chat', () => {
                 // 若之前有 reasoning 累积，则 content 到达即视为推理结束。
                 if (last.reasoning) noteReasoningEnd(last.id)
                 last.content = next
+                // 更新或创建 final phase
+                if (!last.phases) last.phases = []
+                const phases = last.phases
+                const lastPhase = phases[phases.length - 1]
+                if (lastPhase && lastPhase.type === 'final' && lastPhase.isStreaming) {
+                  lastPhase.content += (evt.delta || '')
+                } else {
+                  phases.push({
+                    id: uid(),
+                    type: 'final',
+                    content: next,
+                    isStreaming: true,
+                    timestamp: Date.now(),
+                  })
+                }
               } else {
                 const newId = uid()
                 const nextContent = evt.delta || ''
                 noteThinkingDelta(newId, '', nextContent)
+                const finalPhase: Phase = {
+                  id: uid(),
+                  type: 'final',
+                  content: nextContent,
+                  isStreaming: true,
+                  timestamp: Date.now(),
+                }
                 addMessage(sid, {
                   id: newId,
                   role: 'assistant',
                   content: nextContent,
                   timestamp: Date.now(),
                   isStreaming: true,
+                  phases: [finalPhase],
                 })
               }
 
@@ -841,19 +921,50 @@ export const useChatStore = defineStore('chat', () => {
             case 'tool.started': {
               runHadToolActivity = true
               const msgs = getSessionMsgs(sid)
-              const last = msgs[msgs.length - 1]
-              if (last?.isStreaming) {
-                updateMessage(sid, last.id, { isStreaming: false })
+              // 找到当前 assistant 消息（可能正在流式思考中）
+              let assistantMsg: Message | null = msgs[msgs.length - 1] ?? null
+              // 如果没有 assistant 消息或不是 assistant，创建一个
+              if (!assistantMsg || assistantMsg.role !== 'assistant') {
+                const newId = uid()
+                addMessage(sid, {
+                  id: newId,
+                  role: 'assistant',
+                  content: '',
+                  timestamp: Date.now(),
+                  isStreaming: true,
+                  phases: [],
+                })
+                assistantMsg = getSessionMsgs(sid).find(m => m.id === newId) ?? null
+              } else if (assistantMsg.isStreaming) {
+                // 停止流式，让 content/reasoning 凝固
+                updateMessage(sid, assistantMsg.id, { isStreaming: false })
               }
-              addMessage(sid, {
-                id: uid(),
-                role: 'tool',
-                content: '',
-                timestamp: Date.now(),
-                toolName: evt.tool || evt.name,
-                toolPreview: evt.preview,
-                toolStatus: 'running',
-              })
+
+              if (assistantMsg) {
+                // 确保 phases 数组存在
+                if (!assistantMsg.phases) assistantMsg.phases = []
+                // 标记当前 phase（如果最后是 thinking）为已结束
+                const phases = assistantMsg.phases
+                if (phases.length > 0) {
+                  const lastPhase = phases[phases.length - 1]
+                  if (lastPhase.type === 'thinking' && lastPhase.isStreaming) {
+                    lastPhase.isStreaming = false
+                  }
+                }
+                // 添加 tool_call phase
+                const phaseId = uid()
+                const toolPhase: Phase = {
+                  id: phaseId,
+                  type: 'tool_call',
+                  content: '',
+                  toolName: evt.tool || evt.name,
+                  toolPreview: evt.preview,
+                  toolStatus: 'running',
+                  isStreaming: true,
+                  timestamp: Date.now(),
+                }
+                assistantMsg.phases.push(toolPhase)
+              }
 
               break
             }
@@ -861,28 +972,34 @@ export const useChatStore = defineStore('chat', () => {
             case 'tool.completed': {
               runHadToolActivity = true
               const msgs = getSessionMsgs(sid)
-              const toolMsgs = msgs.filter(
-                m => m.role === 'tool' && m.toolStatus === 'running',
-              )
-              if (toolMsgs.length > 0) {
-                const last = toolMsgs[toolMsgs.length - 1]
-                // Check if tool errored
-                const hasError = (evt as any).error === true
-                const duration = (evt as any).duration
-                const rawOutput = (evt as any).output
-                const toolResult = rawOutput == null
-                  ? undefined
-                  : typeof rawOutput === 'string'
-                    ? rawOutput
-                    : JSON.stringify(rawOutput)
-                updateMessage(sid, last.id, {
-                  toolStatus: hasError ? 'error' : 'done',
-                  toolDuration: duration,
-                  toolResult,
-                  toolPreview: toolResult
-                    ? toolResult.replace(/\s+/g, ' ').slice(0, 140)
-                    : last.toolPreview,
-                })
+              // 找到最后一个有 tool_call phase 的 assistant 消息
+              for (let i = msgs.length - 1; i >= 0; i--) {
+                const msg = msgs[i]
+                if (msg.role === 'assistant' && msg.phases && msg.phases.length > 0) {
+                  const phases = msg.phases
+                  // 找最后一个 running 的 tool_call phase
+                  for (let j = phases.length - 1; j >= 0; j--) {
+                    if (phases[j].type === 'tool_call' && phases[j].toolStatus === 'running') {
+                      const hasError = (evt as any).error === true
+                      const duration = (evt as any).duration
+                      const rawOutput = (evt as any).output
+                      const toolResult = rawOutput == null
+                        ? undefined
+                        : typeof rawOutput === 'string'
+                          ? rawOutput
+                          : JSON.stringify(rawOutput)
+                      phases[j].toolStatus = hasError ? 'error' : 'done'
+                      phases[j].toolDuration = duration
+                      phases[j].toolResult = toolResult
+                      phases[j].toolPreview = toolResult
+                        ? toolResult.replace(/\s+/g, ' ').slice(0, 140)
+                        : phases[j].toolPreview
+                      phases[j].isStreaming = false
+                      break
+                    }
+                  }
+                  break
+                }
               }
 
               break
@@ -893,6 +1010,12 @@ export const useChatStore = defineStore('chat', () => {
               const lastMsg = msgs[msgs.length - 1]
               if (lastMsg?.isStreaming) {
                 updateMessage(sid, lastMsg.id, { isStreaming: false })
+                // 关闭所有 streaming 的 phase
+                if (lastMsg.phases) {
+                  for (const phase of lastMsg.phases) {
+                    if (phase.isStreaming) phase.isStreaming = false
+                  }
+                }
               }
               // Server-computed usage (local countTokens, snapshot-aware)
               if ((evt as any).inputTokens != null) {
@@ -996,6 +1119,12 @@ export const useChatStore = defineStore('chat', () => {
                   content: evt.error ? `Error: ${evt.error}` : 'Run failed',
                   role: 'system',
                 })
+                // 关闭所有 streaming 的 phase
+                if (lastErr.phases) {
+                  for (const phase of lastErr.phases) {
+                    if (phase.isStreaming) phase.isStreaming = false
+                  }
+                }
               } else {
                 addMessage(sid, {
                   id: uid(),
@@ -1004,11 +1133,17 @@ export const useChatStore = defineStore('chat', () => {
                   timestamp: Date.now(),
                 })
               }
-              msgs.forEach((m, i) => {
-                if (m.role === 'tool' && m.toolStatus === 'running') {
-                  msgs[i] = { ...m, toolStatus: 'error' }
+              // 标记所有 running 的 tool phases 为 error
+              for (const m of msgs) {
+                if (m.role === 'assistant' && m.phases) {
+                  for (const p of m.phases) {
+                    if (p.type === 'tool_call' && p.toolStatus === 'running') {
+                      p.toolStatus = 'error'
+                      p.isStreaming = false
+                    }
+                  }
                 }
-              })
+              }
               cleanup()
 
               clearInFlight(sid)

@@ -27,6 +27,7 @@ let pollTimer: ReturnType<typeof setInterval>
 
 // ── Entrance animation ───────────────────────────────────────────────────────
 const animStarted = ref(false)
+const chartAnimKey = ref(0) // increments to retrigger SVG stroke-dashoffset animation
 let animFrame: number
 
 function easeOutCubic(t: number) { return 1 - Math.pow(1 - t, 3) }
@@ -44,6 +45,7 @@ function useCountUp(to: number, ms: number, cb: (v: number) => void) {
 
 function startAnimations() {
   animStarted.value = true
+  chartAnimKey.value++ // retrigger SVG stroke-dashoffset draw-in
   useCountUp(usageStore.totalTokens, 900, v => { animTokens.value = v })
   useCountUp(usageStore.totalSessions, 900, v => { animSessions.value = v })
   useCountUp(configuredChannels.value, 800, v => { animChan.value = v })
@@ -538,10 +540,26 @@ onUnmounted(() => {
             <line x1="0" y1="25" x2="100" y2="25" stroke="rgba(168,216,255,0.06)" stroke-width="0.3" />
             <line x1="0" y1="50" x2="100" y2="50" stroke="rgba(168,216,255,0.06)" stroke-width="0.3" />
             <line x1="0" y1="75" x2="100" y2="75" stroke="rgba(168,216,255,0.06)" stroke-width="0.3" />
-            <!-- Area -->
-            <path v-if="areaPathD" :d="areaPathD" fill="url(#chartGrad)" />
-            <!-- Line -->
-            <path v-if="linePathD" :d="linePathD" fill="none" stroke="#67e8f9" stroke-width="1.5" stroke-linecap="round" stroke-opacity="0.9" />
+            <!-- Area — draws in with stroke-dashoffset -->
+            <path
+              v-if="areaPathD"
+              :d="areaPathD"
+              fill="url(#chartGrad)"
+              class="chart-area"
+              :key="chartAnimKey"
+            />
+            <!-- Line — draws in with stroke-dashoffset -->
+            <path
+              v-if="linePathD"
+              :d="linePathD"
+              fill="none"
+              stroke="#67e8f9"
+              stroke-width="1.5"
+              stroke-linecap="round"
+              stroke-opacity="0.9"
+              class="chart-line"
+              :key="chartAnimKey"
+            />
             <!-- Error dots -->
             <circle
               v-for="(pt, i) in activityDays.filter(p => p.hasError)"
@@ -962,6 +980,11 @@ $text-dim: #3d5a80;
   50% { box-shadow: 0 0 14px rgba($green, 1); opacity: 0.75; }
 }
 
+@keyframes statusGlow {
+  0%, 100% { box-shadow: 0 0 6px rgba($green, 0.7); }
+  50% { box-shadow: 0 0 12px rgba($green, 1), 0 0 20px rgba($green, 0.5); }
+}
+
 // ─── Panel Entrance Animations ───────────────────────────────────────────────
 @keyframes fadeSlideIn {
   from { opacity: 0; transform: translateY(14px); }
@@ -1118,6 +1141,60 @@ $text-dim: #3d5a80;
 @keyframes arcBreathe {
   0%   { filter: brightness(1);   opacity: 0.85; }
   100% { filter: brightness(1.6); opacity: 1; }
+}
+
+// ─── Chart draw-in animation ─────────────────────────────────────────────────
+.chart-line {
+  stroke-dasharray: 300;
+  stroke-dashoffset: 300;
+  animation: chartDrawIn 1.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.chart-area {
+  opacity: 0;
+  animation: chartFadeIn 0.6s ease forwards;
+  animation-delay: 0.8s;
+}
+
+@keyframes chartDrawIn {
+  to { stroke-dashoffset: 0; }
+}
+
+@keyframes chartFadeIn {
+  to { opacity: 1; }
+}
+
+// ─── Background scan-line ────────────────────────────────────────────────────
+.cc-view::before {
+  content: '';
+  position: fixed;
+  top: 0;
+  left: -100%;
+  width: 60%;
+  height: 100%;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(103, 232, 249, 0.025) 40%,
+    rgba(103, 232, 249, 0.05) 50%,
+    rgba(103, 232, 249, 0.025) 60%,
+    transparent 100%
+  );
+  animation: scanLine 8s linear infinite;
+  pointer-events: none;
+  z-index: 0;
+  transform: skewX(-8deg);
+}
+
+@keyframes scanLine {
+  0%   { left: -70%; }
+  100% { left: 130%; }
+}
+
+// ─── Status dot breathing glow ───────────────────────────────────────────────
+.ch-status-dot.online,
+.tm-dot.live {
+  animation: statusGlow 2s ease-in-out infinite;
 }
 
 .ring-pct-text {
