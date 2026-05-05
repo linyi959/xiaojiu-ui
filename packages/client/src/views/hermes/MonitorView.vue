@@ -33,17 +33,20 @@ let animFrame: number
 // Chart tooltip
 const tooltip = ref({ visible: false, x: 0, y: 0, date: '', sessions: 0 })
 
+// Chart crosshair — vertical line + dot following mouse
+const crosshair = ref({ visible: false, x: 0, y: 0, svgX: 0 })
+
 function onChartHover(e: MouseEvent) {
   const svg = (e.currentTarget as SVGElement)
   const rect = svg.getBoundingClientRect()
-  const scaleX = 864 / rect.width   // convert pixel → SVG coordinate
+  const scaleX = 864 / rect.width
+  const pixelX = e.clientX - rect.left
+  const pixelY = e.clientY - rect.top
   const pts = activityDays.value
   if (!pts.length) return
-  const svgX = (e.clientX - rect.left) * scaleX
+  const svgX = pixelX * scaleX
   const idx = Math.round((svgX / 864) * (pts.length - 1))
   const pt = pts[Math.max(0, Math.min(idx, pts.length - 1))]
-  // Position tooltip in pixel space, offset from cursor
-  const pixelX = (pt.x / 864) * rect.width
   tooltip.value = {
     visible: true,
     x: pixelX,
@@ -51,10 +54,17 @@ function onChartHover(e: MouseEvent) {
     date: pt.date,
     sessions: pt.sessions,
   }
+  crosshair.value = {
+    visible: true,
+    x: pixelX,
+    y: pixelY,
+    svgX: pt.x,
+  }
 }
 
 function onChartLeave() {
   tooltip.value.visible = false
+  crosshair.value.visible = false
 }
 
 function easeOutCubic(t: number) { return 1 - Math.pow(1 - t, 3) }
@@ -665,6 +675,29 @@ onUnmounted(() => {
               :cx="pt.x.toFixed(1)" :cy="pt.y.toFixed(1)" r="2.5"
               fill="#f87171" fill-opacity="0.85"
             />
+
+            <!-- ── Crosshair — follows mouse, shows nearest data point ── -->
+            <template v-if="crosshair.visible">
+              <!-- Vertical hair line -->
+              <line
+                :x1="(crosshair.x * 864 / 100).toFixed(1)"
+                y1="0"
+                :x2="(crosshair.x * 864 / 100).toFixed(1)"
+                y2="120"
+                stroke="rgba(168,216,255,0.2)"
+                stroke-width="0.5"
+                stroke-dasharray="3 3"
+              />
+              <!-- Nearest data point halo ring -->
+              <circle
+                :cx="crosshair.svgX.toFixed(1)"
+                cy="0"
+                r="5"
+                fill="rgba(103,232,249,0.12)"
+                stroke="#67e8f9"
+                stroke-width="0.6"
+              />
+            </template>
           </svg>
           <div class="chart-ticks">
             <span v-for="tick in chartTicks" :key="tick.date">{{ tick.date?.slice(5) }}</span>
