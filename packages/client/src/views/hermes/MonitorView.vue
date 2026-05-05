@@ -20,116 +20,115 @@ const memory = ref<MemoryData | null>(null)
 const lastUpdated = ref('—')
 const loadError = ref('')
 
-const totalSkills = computed(() => skills.value.categories.reduce((sum: number, category: SkillCategory) => sum + category.skills.length, 0))
-const enabledSkills = computed(() => skills.value.categories.reduce((sum: number, category: SkillCategory) => sum + category.skills.filter((skill: SkillInfo) => skill.enabled !== false).length, 0))
+const totalSkills = computed(() => skills.value.categories.reduce((sum: number, c: SkillCategory) => sum + c.skills.length, 0))
+const enabledSkills = computed(() => skills.value.categories.reduce((sum: number, c: SkillCategory) => sum + c.skills.filter((s: SkillInfo) => s.enabled !== false).length, 0))
 const skillCategoryCount = computed(() => skills.value.categories.length)
-const totalModels = computed(() => appStore.modelGroups.reduce((sum, group) => sum + group.models.length, 0))
-const runningJobs = computed(() => jobsStore.jobs.filter(job => job.enabled && !job.paused_at).length)
-const pausedJobs = computed(() => jobsStore.jobs.filter(job => !job.enabled || job.paused_at).length)
-const failedJobs = computed(() => jobsStore.jobs.filter(job => job.last_status === 'failed' || !!job.last_error).length)
+const totalModels = computed(() => appStore.modelGroups.reduce((sum, g) => sum + g.models.length, 0))
+const runningJobs = computed(() => jobsStore.jobs.filter(j => j.enabled && !j.paused_at).length)
+const pausedJobs = computed(() => jobsStore.jobs.filter(j => !j.enabled || j.paused_at).length)
+const failedJobs = computed(() => jobsStore.jobs.filter(j => j.last_status === 'failed' || !!j.last_error).length)
 const queuedJobs = computed(() => Math.max(jobsStore.jobs.length - runningJobs.value - pausedJobs.value, 0))
-const taskHealthScore = computed(() => {
-  const total = jobsStore.jobs.length || 1
-  const healthy = Math.max(total - failedJobs.value, 0)
-  return Math.round((healthy / total) * 100)
+
+// Task health as a single percentage for the arc
+const taskHealth = computed(() => {
+  if (!jobsStore.jobs.length) return 100
+  return Math.round(((jobsStore.jobs.length - failedJobs.value) / jobsStore.jobs.length) * 100)
+})
+
+// Arc stroke-dasharray for the health ring (circumference ≈ 2π × 42 ≈ 264)
+const HEALTH_CIRCUMFERENCE = 264
+const healthArc = computed(() => {
+  const pct = taskHealth.value / 100
+  const dash = pct * HEALTH_CIRCUMFERENCE
+  const gap = HEALTH_CIRCUMFERENCE - dash
+  return `${dash} ${gap}`
+})
+
+// Health color: green → yellow → red
+const healthColor = computed(() => {
+  if (taskHealth.value >= 80) return '#6ee7b7'
+  if (taskHealth.value >= 50) return '#fcd34d'
+  return '#f87171'
 })
 
 const coreStatus = computed(() => appStore.connected ? 'ONLINE' : 'OFFLINE')
 const modelLabel = computed(() => appStore.selectedModel || '—')
-const providerLabel = computed(() => {
-  const model = appStore.selectedModel
-  if (!model) return '—'
-  const group = appStore.modelGroups.find(group => group.models.some(item => item === model))
-  return group?.provider || '—'
+const healthySubsystems = computed(() => subsystems.value.filter(i => i.tone === 'good').length)
+
+// --- Activity stream: true area chart data ---
+const activityDays = computed(() => {
+  const days = usageStore.dailyUsage.slice(-30)
+  if (!days.length) return []
+  const maxVal = Math.max(...days.map(d => d.sessions + d.errors), 1)
+  return days.map((d, i) => {
+    const x = days.length <= 1 ? 50 : (i / (days.length - 1)) * 100
+    const y = 100 - Math.min(((d.sessions + d.errors) / maxVal) * 100, 100)
+    return {
+      x,
+      y,
+      label: d.date.slice(5),
+      status: d.errors > 0 ? 'warn' : d.sessions > 0 ? 'live' : 'idle',
+      sessions: d.sessions,
+    }
+  })
 })
 
-const memoryUpdated = computed(() => {
-  const times = [memory.value?.memory_mtime, memory.value?.user_mtime, memory.value?.soul_mtime].filter(Boolean) as number[]
-  if (!times.length) return '—'
-  return new Date(Math.max(...times) * 1000).toLocaleString()
+// SVG path for the area chart
+const areaPath = computed(() => {
+  const pts = activityDays.value
+  if (!pts.length) return ''
+  const bottom = 100
+  const pathParts = pts.map((p, i) => {
+    const cmd = i === 0 ? 'M' : 'L'
+    return `${cmd} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`
+  })
+  const last = pts[pts.length - 1]
+  const first = pts[0]
+  return `${pathParts.join(' ')} L ${last.x.toFixed(1)} ${bottom} L ${first.x.toFixed(1)} ${bottom} Z`
 })
 
-const healthySubsystems = computed(() => subsystems.value.filter(item => item.tone === 'good').length)
-const topModel = computed(() => usageStore.modelUsage[0])
+const linePath = computed(() => {
+  const pts = activityDays.value
+  if (!pts.length) return ''
+  return pts.map((p, i) => {
+    const cmd = i === 0 ? 'M' : 'L'
+    return `${cmd} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`
+  }).join(' ')
+})
+
+// Tick marks for the activity chart
+const chartTicks = computed(() => {
+  const days = activityDays.value
+  if (!days.length) return []
+  // Show first, middle, last
+  const indices = [0, Math.floor(days.length / 2), days.length - 1]
+  return indices.map(i => days[i]).filter(Boolean)
+})
+
+// --- Token data ---
 const topModels = computed(() => usageStore.modelUsage.slice(0, 3))
-const tokenPulse = computed(() => {
-  const daily = usageStore.dailyUsage.slice(-7)
-  if (!daily.length) return []
-  const values = daily.map(day => day.input_tokens + day.output_tokens)
-  const max = Math.max(...values, 1)
-  return daily.map((day, index) => ({
-    id: `${day.date}-${index}`,
-    label: day.date.slice(5),
-    value: day.input_tokens + day.output_tokens,
-    height: Math.max(28, Math.round(((day.input_tokens + day.output_tokens) / max) * 112)),
-  }))
-})
 
-const activityBars = computed(() => {
-  const daily = usageStore.dailyUsage.slice(-12)
-  if (!daily.length) {
-    return Array.from({ length: 12 }, (_, index) => ({ id: `empty-${index}`, height: 28 + (index % 4) * 10, status: 'idle', label: `${index + 1}` }))
-  }
-
-  const max = Math.max(...daily.map(day => day.sessions + day.errors), 1)
-  return daily.map((day, index) => ({
-    id: `${day.date}-${index}`,
-    height: Math.max(20, Math.round(((day.sessions + day.errors) / max) * 116)),
-    status: day.errors > 0 ? 'warn' : day.sessions > 0 ? 'live' : 'idle',
-    label: day.date.slice(5),
-  }))
-})
-
-const activitySignal = computed(() => {
-  const bars = activityBars.value
-  return bars.map((bar, index) => ({
-    id: `signal-${bar.id}`,
-    x: `${(index / Math.max(bars.length - 1, 1)) * 100}%`,
-    y: `${100 - Math.min(bar.height, 116) / 1.28}%`,
-  }))
-})
-
-const events = computed(() => [
-  { title: '任务调度', value: `${runningJobs.value} 运行中 / ${pausedJobs.value} 暂停`, meta: `${failedJobs.value} 异常 · 健康 ${taskHealthScore.value}%`, tone: failedJobs.value ? 'bad' : 'good' },
-  { title: '模型供应', value: `${totalModels.value} 个模型就绪`, meta: providerLabel.value, tone: totalModels.value ? 'good' : 'warn' },
-  { title: '记忆索引', value: memory.value ? '记忆已接入' : '记忆待同步', meta: memoryUpdated.value, tone: memory.value ? 'good' : 'warn' },
-  { title: 'Token 脉冲', value: formatTokens(usageStore.totalTokens), meta: `${usageStore.totalSessions} 会话 · ${formatCost(usageStore.estimatedCost)}`, tone: usageStore.hasData ? 'good' : 'idle' },
+// --- Subsystems ---
+const subsystems = computed(() => [
+  { name: 'Gateway', value: health.value?.status === 'ok' ? 'online' : 'checking', tone: health.value?.status === 'ok' ? 'good' : 'warn' as 'good' | 'warn' | 'bad' },
+  { name: 'BFF', value: appStore.connected ? 'linked' : 'offline', tone: appStore.connected ? 'good' : 'bad' as 'good' | 'warn' | 'bad' },
+  { name: 'Models', value: `${totalModels.value}`, tone: totalModels.value ? 'good' : 'warn' as 'good' | 'warn' | 'bad' },
+  { name: 'Jobs', value: `${runningJobs.value} act`, tone: failedJobs.value ? 'bad' as 'good' | 'warn' | 'bad' : 'good' },
+  { name: 'Memory', value: memory.value ? 'indexed' : 'pending', tone: memory.value ? 'good' : 'warn' as 'good' | 'warn' | 'bad' },
+  { name: 'Skills', value: `${enabledSkills.value}/${totalSkills.value}`, tone: totalSkills.value ? 'good' : 'warn' as 'good' | 'warn' | 'bad' },
 ])
 
+// --- Alert strip ---
 const alerts = computed(() => {
-  const items: Array<{ title: string; detail: string; tone: 'bad' | 'warn' | 'good' }> = []
-
-  if (!appStore.connected) {
-    items.push({ title: '连接断开', detail: 'BFF 与 Gateway 当前未建立稳定连接', tone: 'bad' })
-  }
-
-  if (failedJobs.value > 0) {
-    items.push({ title: '任务异常', detail: `${failedJobs.value} 个任务最近失败或留下错误痕迹`, tone: 'bad' })
-  }
-
-  if (!memory.value) {
-    items.push({ title: '记忆未就绪', detail: 'memory / user / soul 监控源暂未返回状态', tone: 'warn' })
-  }
-
-  if (!usageStore.hasData) {
-    items.push({ title: '用量待采集', detail: '暂无有效 token / session 数据，首页已保留占位', tone: 'warn' })
-  }
-
-  if (!items.length) {
-    items.push({ title: '系统平稳', detail: '当前未检测到阻断级异常，Hermes 处于可用状态', tone: 'good' })
-  }
-
+  const items: Array<{ title: string; detail: string; tone: 'bad' | 'warn' }> = []
+  if (!appStore.connected) items.push({ title: '连接断开', detail: 'BFF 与 Gateway 当前未建立稳定连接', tone: 'bad' })
+  if (failedJobs.value > 0) items.push({ title: '任务异常', detail: `${failedJobs.value} 个任务最近失败或留下错误痕迹`, tone: 'bad' })
+  if (!memory.value) items.push({ title: '记忆未就绪', detail: 'memory / user / soul 监控源暂未返回状态', tone: 'warn' })
+  if (!usageStore.hasData) items.push({ title: '用量待采集', detail: '暂无有效 token / session 数据', tone: 'warn' })
   return items
 })
 
-const subsystems = computed(() => [
-  { name: 'Gateway', value: health.value?.status === 'ok' ? 'online' : 'checking', tone: health.value?.status === 'ok' ? 'good' : 'warn' },
-  { name: 'BFF', value: appStore.connected ? 'linked' : 'offline', tone: appStore.connected ? 'good' : 'bad' },
-  { name: 'Models', value: `${totalModels.value} loaded`, tone: totalModels.value ? 'good' : 'warn' },
-  { name: 'Jobs', value: `${runningJobs.value} active`, tone: failedJobs.value ? 'bad' : 'good' },
-  { name: 'Memory', value: memory.value ? 'indexed' : 'pending', tone: memory.value ? 'good' : 'warn' },
-  { name: 'Skills', value: `${enabledSkills.value}/${totalSkills.value}`, tone: totalSkills.value ? 'good' : 'warn' },
-])
+const hasAlerts = computed(() => alerts.value.length > 0)
 
 function formatVersion() {
   return appStore.serverVersion || health.value?.webui_version || '0.1.0'
@@ -165,7 +164,7 @@ async function refreshMonitor() {
     if (skillRes.status === 'fulfilled') skills.value = skillRes.value
     if (memoryRes.status === 'fulfilled') memory.value = memoryRes.value
 
-    const failed = [healthRes, skillRes, memoryRes, jobsRes, modelsRes, connectionRes, usageRes].filter(result => result.status === 'rejected').length
+    const failed = [healthRes, skillRes, memoryRes, jobsRes, modelsRes, connectionRes, usageRes].filter(r => r.status === 'rejected').length
     if (failed) loadError.value = `${failed} 个监控源暂时不可用`
 
     lastUpdated.value = new Date().toLocaleTimeString()
@@ -178,1061 +177,923 @@ onMounted(refreshMonitor)
 </script>
 
 <template>
-  <section class="monitor-view" aria-labelledby="monitor-title">
-    <div class="monitor-grid-bg" />
-    <div class="noise-overlay" />
+  <section class="command-view" aria-labelledby="monitor-title">
 
-    <header class="home-header panel-shell">
-      <div class="header-copy">
-        <p class="home-kicker">XIAOJIU COMMAND HOME</p>
-        <div class="title-line">
-          <h1 id="monitor-title">中枢总览</h1>
-          <span class="title-badge">LIVE COMMAND SURFACE</span>
+    <!-- ─── Top Status Strip ─── -->
+    <header class="status-strip">
+      <div class="strip-left">
+        <span class="strip-kicker">XIAOJIU COMMAND</span>
+        <h1 id="monitor-title" class="strip-title">中枢总览</h1>
+        <span class="strip-version">v{{ formatVersion() }}</span>
+      </div>
+
+      <div class="strip-metrics">
+        <div class="strip-metric">
+          <span class="strip-metric-label">CORE</span>
+          <span class="strip-metric-value" :class="appStore.connected ? 'good' : 'bad'">{{ coreStatus }}</span>
         </div>
-        <p class="home-summary">这里不是普通监控页，是 Hermes 当前运行态的总台。任务流、token 脉冲、模型与记忆健康，统一从这里先看局势。</p>
-        <div class="header-frequency">
-          <span v-for="index in 18" :key="`freq-${index}`" :style="{ height: `${14 + (index % 6) * 7}px` }" />
+        <div class="strip-divider" />
+        <div class="strip-metric">
+          <span class="strip-metric-label">MODEL</span>
+          <span class="strip-metric-value">{{ modelLabel }}</span>
+        </div>
+        <div class="strip-divider" />
+        <div class="strip-metric">
+          <span class="strip-metric-label">TASKS</span>
+          <span class="strip-metric-value">
+            <span class="val-green">{{ runningJobs }}</span>
+            <span class="val-sep">/</span>
+            <span class="val-dim">{{ pausedJobs }}</span>
+            <span class="val-sep">/</span>
+            <span class="val-red" v-if="failedJobs">{{ failedJobs }}</span>
+          </span>
+        </div>
+        <div class="strip-divider" />
+        <div class="strip-metric">
+          <span class="strip-metric-label">TOKEN</span>
+          <span class="strip-metric-value">{{ formatTokens(usageStore.totalTokens) }}</span>
+        </div>
+        <div class="strip-divider" />
+        <div class="strip-metric">
+          <span class="strip-metric-label">COST</span>
+          <span class="strip-metric-value">{{ formatCost(usageStore.estimatedCost) }}</span>
         </div>
       </div>
-      <div class="header-actions">
-        <div class="heartbeat" :class="{ online: appStore.connected }">
+
+      <div class="strip-actions">
+        <div class="heartbeat-pill" :class="{ online: appStore.connected }">
           <span class="pulse-dot" />
-          <span>{{ coreStatus }}</span>
+          <span>{{ appStore.connected ? 'LIVE' : 'OFFLINE' }}</span>
         </div>
-        <NButton size="small" secondary :loading="loading" @click="refreshMonitor">
+        <NButton size="tiny" secondary :loading="loading" @click="refreshMonitor">
           {{ t('monitor.refresh') }}
         </NButton>
       </div>
     </header>
 
-    <section class="status-spine panel-shell">
-      <div class="spine-cell primary">
-        <span class="spine-label">CORE</span>
-        <strong>{{ coreStatus }}</strong>
-        <small>Hermes heartbeat</small>
-      </div>
-      <div class="spine-cell">
-        <span class="spine-label">MODEL</span>
-        <strong>{{ modelLabel }}</strong>
-        <small>{{ providerLabel }}</small>
-      </div>
-      <div class="spine-cell emphasis">
-        <span class="spine-label">TASK FLOW</span>
-        <strong>{{ runningJobs }}</strong>
-        <small>{{ pausedJobs }} paused · {{ failedJobs }} alert</small>
-      </div>
-      <div class="spine-cell accent">
-        <span class="spine-label">TOKEN</span>
-        <strong>{{ formatTokens(usageStore.totalTokens) }}</strong>
-        <small>{{ formatCost(usageStore.estimatedCost) }} / {{ usageStore.totalSessions }} sessions</small>
-      </div>
-      <div class="spine-cell">
-        <span class="spine-label">LAST PULSE</span>
-        <strong>{{ lastUpdated }}</strong>
-        <small>v{{ formatVersion() }}</small>
-      </div>
-    </section>
+    <!-- ─── Hero Area ─── -->
+    <section class="hero-area">
 
-    <div v-if="loadError" class="monitor-warning">{{ loadError }}</div>
+      <!-- Left: Health Ring -->
+      <article class="panel-shell ring-panel">
+        <div class="panel-label">SYSTEM HEALTH</div>
 
-    <section class="hero-grid">
-      <article class="panel-shell radar-panel">
-        <div class="panel-head overlay-head">
-          <div>
-            <p class="panel-kicker">MISSION RADAR</p>
-            <h2>任务雷达</h2>
+        <div class="ring-stage">
+          <!-- Outer ring segments -->
+          <svg class="ring-svg" viewBox="0 0 120 120" aria-hidden="true">
+            <!-- Background track -->
+            <circle cx="60" cy="60" r="42" fill="none" stroke="rgba(99,231,255,0.07)" stroke-width="8" />
+            <!-- Health arc -->
+            <circle
+              cx="60" cy="60" r="42"
+              fill="none"
+              :stroke="healthColor"
+              stroke-width="8"
+              stroke-linecap="round"
+              :stroke-dasharray="healthArc"
+              transform="rotate(-90 60 60)"
+              class="health-arc"
+            />
+            <!-- Tick marks -->
+            <g class="ring-ticks">
+              <line x1="60" y1="14" x2="60" y2="20" stroke="rgba(99,231,255,0.3)" stroke-width="1.5" />
+              <line x1="106" y1="60" x2="100" y2="60" stroke="rgba(99,231,255,0.3)" stroke-width="1.5" />
+              <line x1="60" y1="106" x2="60" y2="100" stroke="rgba(99,231,255,0.3)" stroke-width="1.5" />
+              <line x1="14" y1="60" x2="20" y2="60" stroke="rgba(99,231,255,0.3)" stroke-width="1.5" />
+            </g>
+          </svg>
+
+          <div class="ring-core">
+            <span class="ring-pct" :style="{ color: healthColor }">{{ taskHealth }}%</span>
+            <span class="ring-label">HEALTH</span>
           </div>
-          <span class="panel-side">{{ runningJobs }} LIVE</span>
         </div>
 
-        <div class="radar-stage">
-          <div class="radar-backdrop" />
-          <div class="radar-crosshair horizontal" />
-          <div class="radar-crosshair vertical" />
-          <div class="radar-ring ring-lg" />
-          <div class="radar-ring ring-md" />
-          <div class="radar-ring ring-sm" />
-          <div class="radar-sweep" />
-          <div class="radar-core-wrap">
-            <div class="radar-core-label">TASK HEALTH</div>
-            <div class="radar-core">{{ taskHealthScore }}%</div>
-          </div>
-          <div class="radar-node node-running">
+        <div class="ring-stats">
+          <div class="ring-stat">
+            <span class="ring-stat-dot run" />
             <span>RUN</span>
             <strong>{{ runningJobs }}</strong>
           </div>
-          <div class="radar-node node-paused">
+          <div class="ring-stat">
+            <span class="ring-stat-dot pause" />
             <span>PAUSE</span>
             <strong>{{ pausedJobs }}</strong>
           </div>
-          <div class="radar-node node-failed">
+          <div class="ring-stat">
+            <span class="ring-stat-dot alert" />
             <span>ALERT</span>
             <strong>{{ failedJobs }}</strong>
           </div>
-          <div class="radar-node node-queued">
+          <div class="ring-stat">
+            <span class="ring-stat-dot queue" />
             <span>QUEUE</span>
             <strong>{{ queuedJobs }}</strong>
           </div>
         </div>
-
-        <div class="radar-footer">
-          <div class="radar-legend">
-            <span><i class="live" />运行</span>
-            <span><i class="pause" />暂停</span>
-            <span><i class="alert" />异常</span>
-            <span><i class="idle" />排队</span>
-          </div>
-          <div class="radar-footnote">命令流健康度由任务异常占比与当前在线态共同估算</div>
-        </div>
       </article>
 
-      <article class="panel-shell activity-panel">
-        <div class="panel-head overlay-head">
-          <div>
-            <p class="panel-kicker">ACTIVITY STREAM</p>
-            <h2>运行活动流</h2>
-          </div>
-          <span class="panel-side">近 12 日</span>
-        </div>
+      <!-- Right: Activity Stream -->
+      <article class="panel-shell stream-panel">
+        <div class="panel-label">ACTIVITY STREAM · 30d</div>
 
-        <div class="stream-shell">
-          <div class="stream-grid-lines" />
-          <svg class="stream-path" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-            <polyline
-              :points="activitySignal.map(point => `${point.x.replace('%', '')},${point.y.replace('%', '')}`).join(' ')"
-              fill="none"
-              stroke="url(#streamGradient)"
-              stroke-width="2.4"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            />
+        <div class="stream-chart-shell">
+          <svg class="stream-svg" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
             <defs>
-              <linearGradient id="streamGradient" x1="0" x2="1" y1="0" y2="0">
+              <linearGradient id="areaGrad" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stop-color="#63e7ff" stop-opacity="0.22" />
+                <stop offset="100%" stop-color="#63e7ff" stop-opacity="0.01" />
+              </linearGradient>
+              <linearGradient id="lineGrad" x1="0" y1="0" x2="1" y2="0">
                 <stop offset="0%" stop-color="#63e7ff" />
-                <stop offset="55%" stop-color="#7dd3fc" />
+                <stop offset="60%" stop-color="#7dd3fc" />
                 <stop offset="100%" stop-color="#a98cff" />
               </linearGradient>
             </defs>
+
+            <!-- Grid lines -->
+            <line x1="0" y1="25" x2="100" y2="25" stroke="rgba(99,231,255,0.06)" stroke-width="0.5" />
+            <line x1="0" y1="50" x2="100" y2="50" stroke="rgba(99,231,255,0.06)" stroke-width="0.5" />
+            <line x1="0" y1="75" x2="100" y2="75" stroke="rgba(99,231,255,0.06)" stroke-width="0.5" />
+
+            <!-- Area fill -->
+            <path v-if="areaPath" :d="areaPath" fill="url(#areaGrad)" />
+            <!-- Line -->
+            <path v-if="linePath" :d="linePath" fill="none" stroke="url(#lineGrad)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
           </svg>
-          <div class="activity-bars refined">
-            <div v-for="bar in activityBars" :key="bar.id" class="activity-slot">
-              <span class="activity-track" />
-              <span class="activity-bar" :class="bar.status" :style="{ height: `${bar.height}px` }" />
-              <small>{{ bar.label }}</small>
-            </div>
+
+          <!-- Tick labels -->
+          <div class="stream-ticks">
+            <span v-for="tick in chartTicks" :key="tick.label">{{ tick.label }}</span>
           </div>
         </div>
 
-        <div class="activity-meta elevated">
-          <div>
-            <span>Jobs</span>
-            <strong>{{ jobsStore.jobs.length }}</strong>
+        <div class="stream-meta-row">
+          <div class="stream-meta-item">
+            <span class="meta-label">SESSIONS</span>
+            <strong>{{ usageStore.totalSessions }}</strong>
           </div>
-          <div>
-            <span>Skills</span>
-            <strong>{{ enabledSkills }}/{{ totalSkills }}</strong>
+          <div class="stream-meta-item">
+            <span class="meta-label">INPUT</span>
+            <strong>{{ formatTokens(usageStore.totalInputTokens) }}</strong>
           </div>
-          <div>
-            <span>Memory</span>
-            <strong>{{ memory ? 'READY' : 'PENDING' }}</strong>
+          <div class="stream-meta-item">
+            <span class="meta-label">OUTPUT</span>
+            <strong>{{ formatTokens(usageStore.totalOutputTokens) }}</strong>
           </div>
-        </div>
-      </article>
-    </section>
-
-    <section class="metrics-grid refined-grid">
-      <article class="panel-shell token-card deluxe-card">
-        <div class="panel-head overlay-head">
-          <div>
-            <p class="panel-kicker">TOKEN PULSE</p>
-            <h2>用量脉冲</h2>
-          </div>
-          <span class="panel-side">30d window</span>
-        </div>
-        <div class="token-main deluxe-main">
-          <strong>{{ formatTokens(usageStore.totalTokens) }}</strong>
-          <small>input {{ formatTokens(usageStore.totalInputTokens) }} · output {{ formatTokens(usageStore.totalOutputTokens) }}</small>
-        </div>
-        <div class="token-spark refined">
-          <div v-for="bar in tokenPulse" :key="bar.id" class="token-col">
-            <span class="token-bar" :style="{ height: `${bar.height}px` }" />
-            <small>{{ bar.label }}</small>
-          </div>
-        </div>
-      </article>
-
-      <article class="panel-shell metric-card subtle-card">
-        <div class="panel-head compact overlay-head">
-          <div>
-            <p class="panel-kicker">COST TRACE</p>
-            <h2>成本与缓存</h2>
-          </div>
-        </div>
-        <div class="metric-stack refined-stack">
-          <div>
-            <span>Estimated</span>
-            <strong>{{ formatCost(usageStore.estimatedCost) }}</strong>
-          </div>
-          <div>
-            <span>Cache Read</span>
+          <div class="stream-meta-item">
+            <span class="meta-label">CACHE</span>
             <strong>{{ formatTokens(usageStore.totalCacheTokens) }}</strong>
           </div>
-          <div>
-            <span>Hit Rate</span>
+        </div>
+      </article>
+
+    </section>
+
+    <!-- ─── Signal Panels ─── -->
+    <section class="signal-panels">
+
+      <article class="panel-shell signal-card">
+        <div class="signal-header">
+          <span class="signal-kicker">TOKEN</span>
+          <span class="signal-title">用量总览</span>
+        </div>
+        <div class="signal-big-num">{{ formatTokens(usageStore.totalTokens) }}</div>
+        <div class="signal-rows">
+          <div class="signal-row">
+            <span>Input</span>
+            <strong>{{ formatTokens(usageStore.totalInputTokens) }}</strong>
+          </div>
+          <div class="signal-row">
+            <span>Output</span>
+            <strong>{{ formatTokens(usageStore.totalOutputTokens) }}</strong>
+          </div>
+          <div class="signal-row">
+            <span>Cost</span>
+            <strong>{{ formatCost(usageStore.estimatedCost) }}</strong>
+          </div>
+          <div class="signal-row">
+            <span>Cache Hit</span>
             <strong>{{ usageStore.cacheHitRate == null ? '—' : `${usageStore.cacheHitRate.toFixed(1)}%` }}</strong>
           </div>
         </div>
       </article>
 
-      <article class="panel-shell metric-card subtle-card">
-        <div class="panel-head compact overlay-head">
-          <div>
-            <p class="panel-kicker">MODEL TRAFFIC</p>
-            <h2>模型活动</h2>
-          </div>
+      <article class="panel-shell signal-card">
+        <div class="signal-header">
+          <span class="signal-kicker">SYSTEMS</span>
+          <span class="signal-title">子系统状态</span>
+          <span class="signal-badge" :class="healthySubsystems === subsystems.length ? 'good' : 'warn'">
+            {{ healthySubsystems }}/{{ subsystems.length }}
+          </span>
         </div>
-        <div class="top-model-strip">
-          <div v-for="item in topModels" :key="item.model" class="top-model-row">
-            <span class="model-pill">{{ item.model }}</span>
-            <strong>{{ formatTokens(item.totalTokens) }}</strong>
-          </div>
-        </div>
-      </article>
-
-      <article class="panel-shell metric-card subtle-card">
-        <div class="panel-head compact overlay-head">
-          <div>
-            <p class="panel-kicker">MEMORY CORE</p>
-            <h2>记忆状态</h2>
-          </div>
-        </div>
-        <div class="metric-stack refined-stack">
-          <div>
-            <span>Status</span>
-            <strong>{{ memory ? 'INDEXED' : 'PENDING' }}</strong>
-          </div>
-          <div>
-            <span>Updated</span>
-            <strong>{{ memoryUpdated }}</strong>
-          </div>
-          <div>
-            <span>Skill Groups</span>
-            <strong>{{ skillCategoryCount }}</strong>
+        <div class="subsystem-rows">
+          <div v-for="item in subsystems" :key="item.name" class="sub-row" :class="item.tone">
+            <span class="sub-dot" />
+            <span class="sub-name">{{ item.name }}</span>
+            <span class="sub-val">{{ item.value }}</span>
           </div>
         </div>
       </article>
 
-      <article class="panel-shell subsystem-card deluxe-card">
-        <div class="panel-head compact overlay-head">
-          <div>
-            <p class="panel-kicker">SUBSYSTEMS</p>
-            <h2>系统健康</h2>
-          </div>
-          <span class="panel-side">{{ healthySubsystems }}/{{ subsystems.length }}</span>
+      <article class="panel-shell signal-card">
+        <div class="signal-header">
+          <span class="signal-kicker">MODELS &amp; SKILLS</span>
+          <span class="signal-title">模型与技能</span>
         </div>
-        <div class="subsystem-list refined-subsystems">
-          <div v-for="item in subsystems" :key="item.name" class="subsystem-row" :class="item.tone">
-            <span class="subsystem-dot" />
-            <div>
-              <strong>{{ item.name }}</strong>
-              <small>{{ item.value }}</small>
-            </div>
+        <div class="model-rows">
+          <div v-for="item in topModels" :key="item.model" class="model-row">
+            <span class="model-name">{{ item.model }}</span>
+            <span class="model-tokens">{{ formatTokens(item.totalTokens) }}</span>
+          </div>
+          <div v-if="!topModels.length" class="empty-hint">暂无模型用量数据</div>
+        </div>
+        <div class="skill-pills">
+          <div class="skill-pill">
+            <span class="skill-pill-label">Skills</span>
+            <span class="skill-pill-val">{{ enabledSkills }}/{{ totalSkills }}</span>
+          </div>
+          <div class="skill-pill">
+            <span class="skill-pill-label">Groups</span>
+            <span class="skill-pill-val">{{ skillCategoryCount }}</span>
+          </div>
+          <div class="skill-pill">
+            <span class="skill-pill-label">Models</span>
+            <span class="skill-pill-val">{{ totalModels }}</span>
           </div>
         </div>
       </article>
+
     </section>
 
-    <section class="watch-grid refined-watch">
-      <article class="panel-shell watch-panel deluxe-card">
-        <div class="panel-head overlay-head">
-          <div>
-            <p class="panel-kicker">RECENT SIGNALS</p>
-            <h2>最近动态</h2>
-          </div>
-        </div>
-        <div class="watch-list refined-watch-list">
-          <div v-for="item in events" :key="item.title" class="watch-item" :class="item.tone">
-            <strong>{{ item.title }}</strong>
-            <span>{{ item.value }}</span>
-            <small>{{ item.meta }}</small>
-          </div>
-        </div>
-      </article>
+    <!-- ─── Alert Strip ─── -->
+    <div v-if="hasAlerts" class="alert-strip">
+      <div v-for="alert in alerts" :key="alert.title" class="alert-item" :class="alert.tone">
+        <span class="alert-dot" />
+        <strong>{{ alert.title }}</strong>
+        <span>{{ alert.detail }}</span>
+      </div>
+    </div>
 
-      <article class="panel-shell watch-panel deluxe-card">
-        <div class="panel-head overlay-head">
-          <div>
-            <p class="panel-kicker">ALERT DESK</p>
-            <h2>异常观察</h2>
-          </div>
-        </div>
-        <div class="watch-list refined-watch-list">
-          <div v-for="item in alerts" :key="item.title" class="watch-item" :class="item.tone">
-            <strong>{{ item.title }}</strong>
-            <span>{{ item.detail }}</span>
-          </div>
-        </div>
-      </article>
-    </section>
+    <div v-if="loadError" class="load-error">{{ loadError }}</div>
+
   </section>
 </template>
 
 <style scoped lang="scss">
-.monitor-view {
-  position: relative;
+// ─── Variables ───────────────────────────────────────────
+$bg-base: #02040b;
+$bg-panel: rgba(6, 14, 28, 0.92);
+$border: rgba(99, 231, 255, 0.1);
+$border-bright: rgba(99, 231, 255, 0.22);
+$cyan: #63e7ff;
+$green: #6ee7b7;
+$yellow: #fcd34d;
+$red: #f87171;
+$purple: #a98cff;
+$text-primary: #edf7ff;
+$text-secondary: #7f90aa;
+$text-dim: #4a5568;
+$radius: 24px;
+
+// ─── Base ────────────────────────────────────────────────
+.command-view {
   min-height: calc(100 * var(--vh));
-  padding: 24px;
-  overflow: hidden auto;
-  color: #f8fafc;
+  padding: 20px 24px 28px;
   background:
-    radial-gradient(circle at top left, rgba(56, 189, 248, 0.12), transparent 28%),
-    radial-gradient(circle at 88% 10%, rgba(34, 197, 94, 0.11), transparent 24%),
-    linear-gradient(135deg, #02040b 0%, #07111f 42%, #02040b 100%);
-}
-
-.monitor-view::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  opacity: 0.18;
-  background-image:
-    linear-gradient(rgba(99, 231, 255, 0.04) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(99, 231, 255, 0.04) 1px, transparent 1px);
-  background-size: 44px 44px;
-  mask-image: radial-gradient(circle at center, black, transparent 84%);
-}
-
-.monitor-grid-bg,
-.noise-overlay,
-.home-header,
-.status-spine,
-.hero-grid,
-.metrics-grid,
-.watch-grid,
-.monitor-warning {
-  position: relative;
-  z-index: 1;
-}
-
-.monitor-grid-bg {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  opacity: 0.12;
-  background: repeating-linear-gradient(0deg, transparent 0 8px, rgba(255, 255, 255, 0.26) 9px);
-}
-
-.noise-overlay {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  opacity: 0.04;
-  background-image: radial-gradient(rgba(255, 255, 255, 0.6) 0.5px, transparent 0.6px);
-  background-size: 12px 12px;
-  mix-blend-mode: screen;
-}
-
-.panel-shell {
-  position: relative;
-  border: 1px solid rgba(99, 231, 255, 0.12);
-  border-radius: 28px;
-  background: linear-gradient(180deg, rgba(8, 18, 34, 0.88), rgba(3, 8, 18, 0.78));
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03), 0 24px 48px rgba(0, 0, 0, 0.24);
-  backdrop-filter: blur(18px);
-  overflow: hidden;
-}
-
-.panel-shell::before {
-  content: '';
-  position: absolute;
-  inset: 1px;
-  border-radius: 27px;
-  pointer-events: none;
-  border: 1px solid rgba(255, 255, 255, 0.025);
-}
-
-.panel-shell::after {
-  content: '';
-  position: absolute;
-  left: 24px;
-  right: 24px;
-  top: 0;
-  height: 1px;
-  background: linear-gradient(90deg, transparent, rgba(99, 231, 255, 0.28), transparent);
-  pointer-events: none;
-}
-
-.home-header {
+    radial-gradient(circle at 8% 6%, rgba(56, 189, 248, 0.09), transparent 30%),
+    radial-gradient(circle at 92% 14%, rgba(34, 197, 94, 0.07), transparent 26%),
+    linear-gradient(148deg, #020810 0%, #050e1e 55%, #02040b 100%);
+  color: $text-primary;
   display: flex;
-  justify-content: space-between;
+  flex-direction: column;
+  gap: 16px;
+  overflow: hidden auto;
+}
+
+// ─── Panel Shell ─────────────────────────────────────────
+.panel-shell {
+  background: $bg-panel;
+  border: 1px solid $border;
+  border-radius: $radius;
+  backdrop-filter: blur(20px);
+  position: relative;
+  overflow: hidden;
+
+  &::after {
+    content: '';
+    position: absolute;
+    left: 20px;
+    right: 20px;
+    top: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(99,231,255,0.22), transparent);
+    pointer-events: none;
+  }
+}
+
+.panel-label {
+  color: $cyan;
+  font-family: 'Fira Code', monospace;
+  font-size: 10px;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  padding: 16px 20px 0;
+}
+
+// ─── Top Status Strip ────────────────────────────────────
+.status-strip {
+  display: flex;
+  align-items: center;
   gap: 20px;
-  padding: 26px 28px;
+  padding: 14px 20px;
+  background: $bg-panel;
+  border: 1px solid $border;
+  border-radius: $radius;
+  backdrop-filter: blur(20px);
+  flex-wrap: wrap;
+
+  &::after {
+    content: '';
+    position: absolute;
+    left: 20px;
+    right: 20px;
+    top: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(99,231,255,0.22), transparent);
+    pointer-events: none;
+  }
 }
 
-.header-copy {
-  display: grid;
-  gap: 10px;
-  max-width: 780px;
-}
-
-.title-line {
+.strip-left {
   display: flex;
   align-items: center;
   gap: 12px;
-  flex-wrap: wrap;
+  flex-shrink: 0;
 }
 
-.title-badge {
-  padding: 7px 12px;
-  border-radius: 999px;
-  border: 1px solid rgba(99, 231, 255, 0.18);
-  background: rgba(99, 231, 255, 0.08);
-  color: #a7f3ff;
+.strip-kicker {
+  color: $cyan;
   font-family: 'Fira Code', monospace;
   font-size: 10px;
-  letter-spacing: 0.18em;
+  letter-spacing: 0.2em;
 }
 
-.home-kicker,
-.panel-kicker,
-.spine-label {
-  margin: 0;
-  color: #63e7ff;
-  font-family: 'Fira Code', monospace;
-  font-size: 11px;
-  letter-spacing: 0.22em;
-  text-transform: uppercase;
-}
-
-.header-copy h1,
-.panel-head h2 {
-  margin: 0;
-  color: #f8fafc;
-  font-size: 30px;
+.strip-title {
+  font-size: 18px;
   font-weight: 640;
+  color: $text-primary;
+  margin: 0;
   letter-spacing: -0.02em;
 }
 
-.home-summary {
-  margin: 0;
-  max-width: 720px;
-  color: #8ba0bd;
-  font-size: 13px;
-  line-height: 1.75;
+.strip-version {
+  color: $text-secondary;
+  font-family: 'Fira Code', monospace;
+  font-size: 10px;
+  opacity: 0.6;
 }
 
-.header-frequency {
-  margin-top: 8px;
+.strip-metrics {
   display: flex;
-  align-items: end;
-  gap: 5px;
-  height: 54px;
-}
-
-.header-frequency span {
-  width: 4px;
-  border-radius: 999px;
-  background: linear-gradient(180deg, rgba(99, 231, 255, 0.92), rgba(99, 231, 255, 0.04));
-  box-shadow: 0 0 12px rgba(99, 231, 255, 0.24);
-}
-
-.header-actions {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-}
-
-.heartbeat {
-  display: inline-flex;
   align-items: center;
-  gap: 10px;
-  padding: 9px 12px;
-  border: 1px solid rgba(99, 231, 255, 0.16);
-  border-radius: 999px;
-  color: #9eb0c8;
-  font-size: 12px;
-  background: rgba(4, 10, 21, 0.58);
-}
-
-.heartbeat.online {
-  color: #d5fff2;
-  border-color: rgba(110, 231, 183, 0.3);
-}
-
-.pulse-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #7f90aa;
-}
-
-.heartbeat.online .pulse-dot {
-  background: #6ee7b7;
-  box-shadow: 0 0 12px rgba(110, 231, 183, 0.9);
-}
-
-.status-spine {
-  margin-top: 16px;
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 10px;
-  padding: 14px;
-}
-
-.spine-cell {
-  display: grid;
-  gap: 4px;
-  padding: 14px 16px;
-  border-radius: 20px;
-  background: rgba(6, 13, 26, 0.62);
-  border: 1px solid rgba(255, 255, 255, 0.04);
-}
-
-.spine-cell.primary {
-  background: linear-gradient(180deg, rgba(99, 231, 255, 0.11), rgba(6, 13, 26, 0.7));
-}
-
-.spine-cell.emphasis {
-  background: linear-gradient(180deg, rgba(169, 140, 255, 0.11), rgba(6, 13, 26, 0.7));
-}
-
-.spine-cell.accent {
-  background: linear-gradient(180deg, rgba(110, 231, 183, 0.1), rgba(6, 13, 26, 0.7));
-}
-
-.spine-cell strong {
-  font-size: 16px;
-  font-weight: 600;
-  color: #edf7ff;
-}
-
-.spine-cell small,
-.panel-side,
-.watch-item small,
-.metric-stack span,
-.activity-meta span,
-.radar-legend span,
-.subsystem-row small,
-.radar-footnote,
-.token-col small,
-.activity-slot small {
-  color: #7f90aa;
-  font-size: 11px;
-}
-
-.monitor-warning {
-  margin-top: 14px;
-  padding: 12px 14px;
-  border-radius: 16px;
-  border: 1px solid rgba(251, 191, 36, 0.24);
-  background: rgba(251, 191, 36, 0.08);
-  color: #fcd34d;
-  font-size: 12px;
-}
-
-.hero-grid {
-  margin-top: 18px;
-  display: grid;
-  grid-template-columns: 1.08fr 0.92fr;
-  gap: 18px;
-}
-
-.metrics-grid {
-  margin-top: 18px;
-  display: grid;
-  grid-template-columns: repeat(12, minmax(0, 1fr));
-  gap: 18px;
-}
-
-.watch-grid {
-  margin-top: 18px;
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 18px;
-  padding-bottom: 12px;
-}
-
-.overlay-head {
-  position: relative;
-  z-index: 2;
-}
-
-.panel-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.panel-head.compact h2 {
-  font-size: 18px;
-}
-
-.radar-panel,
-.activity-panel,
-.token-card,
-.metric-card,
-.watch-panel,
-.subsystem-card {
-  padding: 22px;
-}
-
-.deluxe-card {
-  background: linear-gradient(180deg, rgba(9, 20, 39, 0.95), rgba(3, 8, 18, 0.82));
-}
-
-.subtle-card {
-  background: linear-gradient(180deg, rgba(7, 16, 31, 0.88), rgba(3, 8, 18, 0.76));
-}
-
-.radar-stage {
-  position: relative;
-  margin-top: 18px;
-  aspect-ratio: 1 / 1;
-  border-radius: 30px;
-  background: radial-gradient(circle at center, rgba(99, 231, 255, 0.08), rgba(2, 6, 23, 0.5));
-  overflow: hidden;
-  border: 1px solid rgba(99, 231, 255, 0.12);
-}
-
-.radar-backdrop {
-  position: absolute;
-  inset: 0;
-  background: radial-gradient(circle at center, rgba(99, 231, 255, 0.08), transparent 58%);
-}
-
-.radar-crosshair {
-  position: absolute;
-  background: rgba(99, 231, 255, 0.08);
-}
-
-.radar-crosshair.horizontal {
-  left: 0;
-  right: 0;
-  top: 50%;
-  height: 1px;
-}
-
-.radar-crosshair.vertical {
-  top: 0;
-  bottom: 0;
-  left: 50%;
-  width: 1px;
-}
-
-.radar-ring,
-.radar-sweep,
-.radar-node,
-.radar-core-wrap {
-  position: absolute;
-}
-
-.radar-ring {
-  border: 1px solid rgba(99, 231, 255, 0.12);
-  border-radius: 50%;
-}
-
-.ring-lg { inset: 10%; }
-.ring-md { inset: 25%; }
-.ring-sm { inset: 40%; }
-
-.radar-sweep {
-  inset: -10%;
-  background: conic-gradient(from 90deg, rgba(99, 231, 255, 0), rgba(99, 231, 255, 0.34), rgba(99, 231, 255, 0));
-  animation: sweep 6s linear infinite;
-}
-
-.radar-core-wrap {
-  top: 50%;
-  left: 50%;
-  width: 120px;
-  height: 120px;
-  transform: translate(-50%, -50%);
-  display: grid;
-  place-items: center;
-  border-radius: 50%;
-  border: 1px solid rgba(99, 231, 255, 0.24);
-  background: radial-gradient(circle, rgba(8, 18, 34, 0.96), rgba(2, 6, 23, 0.84));
-  box-shadow: 0 0 34px rgba(99, 231, 255, 0.18);
-}
-
-.radar-core-label {
-  position: absolute;
-  top: 28px;
-  color: #7f90aa;
-  font-family: 'Fira Code', monospace;
-  font-size: 10px;
-  letter-spacing: 0.16em;
-}
-
-.radar-core {
-  font-size: 30px;
-  font-weight: 680;
-  color: #63e7ff;
-}
-
-.radar-node {
-  min-width: 76px;
-  padding: 10px 10px 9px;
-  border-radius: 18px;
-  text-align: center;
-  border: 1px solid rgba(99, 231, 255, 0.14);
-  background: rgba(4, 10, 21, 0.9);
-  backdrop-filter: blur(10px);
-  display: grid;
-  gap: 4px;
-}
-
-.radar-node span {
-  color: #7f90aa;
-  font-family: 'Fira Code', monospace;
-  font-size: 10px;
-  letter-spacing: 0.16em;
-}
-
-.radar-node strong {
-  font-size: 16px;
-  color: #edf7ff;
-}
-
-.node-running { top: 14%; left: 50%; transform: translateX(-50%); }
-.node-paused { right: 10%; top: 47%; }
-.node-failed { left: 10%; top: 53%; }
-.node-queued { left: 50%; bottom: 11%; transform: translateX(-50%); }
-
-.radar-footer {
-  margin-top: 14px;
-  display: grid;
-  gap: 10px;
-}
-
-.radar-legend {
-  display: flex;
-  gap: 16px;
+  gap: 0;
+  flex: 1;
+  justify-content: center;
   flex-wrap: wrap;
 }
 
-.radar-legend i {
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  margin-right: 6px;
-}
-
-.radar-legend .live { background: #63e7ff; }
-.radar-legend .pause { background: #a98cff; }
-.radar-legend .alert { background: #f87171; }
-.radar-legend .idle { background: #94a3b8; }
-
-.stream-shell {
-  position: relative;
-  margin-top: 18px;
-  min-height: 270px;
-  padding: 18px 14px 12px;
-  border-radius: 24px;
-  border: 1px solid rgba(99, 231, 255, 0.08);
-  background: linear-gradient(180deg, rgba(5, 11, 22, 0.8), rgba(2, 6, 16, 0.56));
-}
-
-.stream-grid-lines {
-  position: absolute;
-  inset: 16px 14px 26px;
-  background-image: linear-gradient(rgba(99, 231, 255, 0.08) 1px, transparent 1px);
-  background-size: 100% 25%;
-  opacity: 0.5;
-}
-
-.stream-path {
-  position: absolute;
-  inset: 24px 14px 48px;
-  width: calc(100% - 28px);
-  height: calc(100% - 72px);
-  opacity: 0.82;
-}
-
-.activity-bars {
-  margin-top: 22px;
-  min-height: 180px;
-  display: grid;
-  grid-template-columns: repeat(12, minmax(0, 1fr));
-  align-items: end;
-  gap: 8px;
-}
-
-.activity-bars.refined {
-  position: relative;
-  z-index: 1;
-  min-height: 208px;
-  gap: 10px;
-}
-
-.activity-slot {
-  position: relative;
+.strip-metric {
   display: flex;
-  flex-direction: column;
-  justify-content: end;
   align-items: center;
   gap: 8px;
-  height: 100%;
+  padding: 4px 14px;
 }
 
-.activity-track {
-  position: absolute;
-  bottom: 20px;
-  width: 100%;
-  max-width: 18px;
-  height: calc(100% - 34px);
+.strip-metric-label {
+  color: $text-dim;
+  font-family: 'Fira Code', monospace;
+  font-size: 10px;
+  letter-spacing: 0.16em;
+}
+
+.strip-metric-value {
+  font-family: 'Fira Code', monospace;
+  font-size: 12px;
+  color: $text-primary;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+
+  &.good { color: $green; }
+  &.bad { color: $red; }
+}
+
+.val-sep { color: $text-dim; }
+.val-dim { color: $text-secondary; }
+.val-green { color: $green; }
+.val-red { color: $red; }
+
+.strip-divider {
+  width: 1px;
+  height: 16px;
+  background: rgba(255,255,255,0.06);
+  flex-shrink: 0;
+}
+
+.strip-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+}
+
+.heartbeat-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 12px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(99,231,255,0.14);
+  background: rgba(4,10,21,0.6);
+  color: $text-secondary;
+  font-family: 'Fira Code', monospace;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+
+  &.online {
+    border-color: rgba(110,231,183,0.3);
+    color: $green;
+  }
 }
 
-.activity-bar {
+.pulse-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: $text-dim;
+}
+
+.heartbeat-pill.online .pulse-dot {
+  background: $green;
+  box-shadow: 0 0 10px rgba($green, 0.9);
+}
+
+// ─── Hero Area ───────────────────────────────────────────
+.hero-area {
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  gap: 16px;
+  min-height: 0;
+}
+
+.ring-panel {
+  display: flex;
+  flex-direction: column;
+}
+
+.ring-stage {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  min-height: 180px;
+}
+
+.ring-svg {
+  width: 200px;
+  height: 200px;
+  position: absolute;
+}
+
+.health-arc {
+  transition: stroke-dasharray 600ms ease, stroke 400ms ease;
+}
+
+.ring-core {
   position: relative;
   z-index: 1;
-  width: 100%;
-  max-width: 18px;
-  border-radius: 999px 999px 8px 8px;
-  background: rgba(148, 163, 184, 0.28);
-  box-shadow: 0 0 16px rgba(148, 163, 184, 0.14);
-}
-
-.activity-bar.live {
-  background: linear-gradient(180deg, rgba(99, 231, 255, 0.95), rgba(77, 141, 255, 0.28));
-}
-
-.activity-bar.warn {
-  background: linear-gradient(180deg, rgba(251, 191, 36, 0.95), rgba(248, 113, 113, 0.42));
-}
-
-.activity-meta {
-  margin-top: 18px;
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  place-items: center;
+  gap: 2px;
+  text-align: center;
+}
+
+.ring-pct {
+  font-size: 38px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1;
+  transition: color 400ms ease;
+}
+
+.ring-label {
+  color: $text-secondary;
+  font-family: 'Fira Code', monospace;
+  font-size: 9px;
+  letter-spacing: 0.2em;
+}
+
+.ring-stats {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+  padding: 0 16px 16px;
+}
+
+.ring-stat {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 10px;
+  border-radius: 14px;
+  background: rgba(4,10,21,0.5);
+  border: 1px solid rgba(255,255,255,0.04);
+  font-size: 11px;
+  color: $text-secondary;
+
+  strong {
+    margin-left: auto;
+    font-size: 14px;
+    color: $text-primary;
+  }
+}
+
+.ring-stat-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+
+  &.run { background: $cyan; }
+  &.pause { background: $purple; }
+  &.alert { background: $red; }
+  &.queue { background: $text-dim; }
+}
+
+.stream-panel {
+  display: flex;
+  flex-direction: column;
+}
+
+.stream-chart-shell {
+  flex: 1;
+  position: relative;
+  min-height: 180px;
+  padding: 8px 16px 0;
+}
+
+.stream-svg {
+  width: 100%;
+  height: 100%;
+  position: absolute;
+  inset: 8px 16px 36px;
+}
+
+.stream-ticks {
+  position: absolute;
+  bottom: 8px;
+  left: 16px;
+  right: 16px;
+  display: flex;
+  justify-content: space-between;
+  font-family: 'Fira Code', monospace;
+  font-size: 9px;
+  color: $text-dim;
+}
+
+.stream-meta-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  padding: 12px 16px 16px;
+}
+
+.stream-meta-item {
+  display: grid;
+  gap: 3px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(4,10,21,0.5);
+  border: 1px solid rgba(255,255,255,0.04);
+
+  .meta-label {
+    color: $text-dim;
+    font-family: 'Fira Code', monospace;
+    font-size: 9px;
+    letter-spacing: 0.14em;
+  }
+
+  strong {
+    font-size: 14px;
+    color: $text-primary;
+  }
+}
+
+// ─── Signal Panels ────────────────────────────────────────
+.signal-panels {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+}
+
+.signal-card {
+  padding: 18px 20px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.signal-header {
+  display: flex;
+  align-items: baseline;
   gap: 10px;
 }
 
-.activity-meta.elevated div {
-  padding: 12px 14px;
-  border-radius: 18px;
-  background: rgba(4, 10, 21, 0.54);
-  border: 1px solid rgba(255, 255, 255, 0.04);
+.signal-kicker {
+  color: $cyan;
+  font-family: 'Fira Code', monospace;
+  font-size: 10px;
+  letter-spacing: 0.2em;
 }
 
-.activity-meta div,
-.metric-stack div {
-  display: grid;
-  gap: 4px;
+.signal-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: $text-primary;
 }
 
-.activity-meta strong,
-.metric-stack strong,
-.watch-item strong,
-.subsystem-row strong,
-.top-model-row strong {
-  color: #edf7ff;
+.signal-badge {
+  margin-left: auto;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-family: 'Fira Code', monospace;
+  font-size: 10px;
+  border: 1px solid;
+  background: rgba(4,10,21,0.5);
+
+  &.good {
+    color: $green;
+    border-color: rgba($green, 0.3);
+  }
+  &.warn {
+    color: $yellow;
+    border-color: rgba($yellow, 0.3);
+  }
 }
 
-.refined-grid {
-  align-items: stretch;
+.signal-big-num {
+  font-size: 36px;
+  font-weight: 700;
+  color: $text-primary;
+  letter-spacing: -0.03em;
+  line-height: 1;
 }
 
-.token-card {
-  grid-column: span 5;
-}
-
-.subsystem-card {
-  grid-column: span 4;
-}
-
-.metrics-grid > .metric-card:not(.token-card):not(.subsystem-card) {
-  grid-column: span 3;
-}
-
-.deluxe-main {
-  margin-top: 20px;
+.signal-rows {
   display: grid;
   gap: 6px;
 }
 
-.deluxe-main strong {
-  font-size: 34px;
-  color: #f8fafc;
-  letter-spacing: -0.02em;
+.signal-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 7px 10px;
+  border-radius: 10px;
+  background: rgba(4,10,21,0.45);
+  border: 1px solid rgba(255,255,255,0.03);
+  font-size: 12px;
+
+  span { color: $text-secondary; }
+  strong { color: $text-primary; font-weight: 500; }
 }
 
-.deluxe-main small {
-  color: #8ba0bd;
-}
-
-.token-spark {
-  margin-top: 22px;
+.subsystem-rows {
   display: grid;
-  grid-template-columns: repeat(7, minmax(0, 1fr));
-  gap: 10px;
-  align-items: end;
+  gap: 6px;
 }
 
-.token-spark.refined {
-  gap: 14px;
-}
-
-.token-col {
-  display: grid;
-  gap: 8px;
-  justify-items: center;
-}
-
-.token-bar {
-  width: 100%;
-  max-width: 30px;
-  border-radius: 999px 999px 10px 10px;
-  background: linear-gradient(180deg, rgba(110, 231, 183, 0.98), rgba(99, 231, 255, 0.18));
-  box-shadow: 0 0 22px rgba(110, 231, 183, 0.22);
-}
-
-.refined-stack {
-  margin-top: 22px;
-  display: grid;
-  gap: 16px;
-}
-
-.refined-stack strong {
-  font-size: 19px;
-}
-
-.top-model-strip {
-  margin-top: 22px;
-  display: grid;
-  gap: 10px;
-}
-
-.top-model-row {
+.sub-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 12px 14px;
-  border-radius: 16px;
-  background: rgba(4, 10, 21, 0.58);
-  border: 1px solid rgba(255, 255, 255, 0.04);
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: 10px;
+  background: rgba(4,10,21,0.45);
+  border: 1px solid rgba(255,255,255,0.03);
+  font-size: 12px;
+
+  &.good .sub-dot { background: $green; box-shadow: 0 0 8px rgba($green, 0.9); }
+  &.warn .sub-dot { background: $yellow; box-shadow: 0 0 8px rgba($yellow, 0.9); }
+  &.bad .sub-dot { background: $red; box-shadow: 0 0 8px rgba($red, 0.9); }
 }
 
-.model-pill {
+.sub-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: $text-dim;
+}
+
+.sub-name {
+  color: $text-primary;
+  font-size: 12px;
+  flex: 1;
+}
+
+.sub-val {
+  color: $text-secondary;
+  font-family: 'Fira Code', monospace;
+  font-size: 10px;
+}
+
+.model-rows {
+  display: grid;
+  gap: 6px;
+}
+
+.model-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 7px 10px;
+  border-radius: 10px;
+  background: rgba(4,10,21,0.45);
+  border: 1px solid rgba(255,255,255,0.03);
+}
+
+.model-name {
   color: #cbe5ff;
   font-family: 'Fira Code', monospace;
   font-size: 11px;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.04em;
 }
 
-.refined-subsystems {
-  margin-top: 20px;
-  display: grid;
-  gap: 10px;
+.model-tokens {
+  color: $text-secondary;
+  font-family: 'Fira Code', monospace;
+  font-size: 11px;
 }
 
-.subsystem-row {
+.empty-hint {
+  color: $text-dim;
+  font-size: 12px;
+  text-align: center;
+  padding: 16px 0;
+}
+
+.skill-pills {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: auto;
+}
+
+.skill-pill {
   display: flex;
   align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: rgba(4,10,21,0.5);
+  border: 1px solid rgba(255,255,255,0.05);
+}
+
+.skill-pill-label {
+  color: $text-secondary;
+  font-size: 10px;
+}
+
+.skill-pill-val {
+  color: $text-primary;
+  font-family: 'Fira Code', monospace;
+  font-size: 11px;
+}
+
+// ─── Alert Strip ─────────────────────────────────────────
+.alert-strip {
+  display: flex;
   gap: 10px;
-  padding: 12px 14px;
+  flex-wrap: wrap;
+}
+
+.alert-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 10px 14px;
   border-radius: 16px;
-  background: rgba(4, 10, 21, 0.62);
-  border: 1px solid rgba(255, 255, 255, 0.04);
+  background: rgba(4,10,21,0.7);
+  border: 1px solid;
+  font-size: 12px;
+  flex: 1;
+  min-width: 220px;
+
+  &.bad {
+    border-color: rgba($red, 0.28);
+    background: rgba($red, 0.06);
+  }
+
+  &.warn {
+    border-color: rgba($yellow, 0.24);
+    background: rgba($yellow, 0.05);
+  }
+
+  strong { color: $text-primary; font-weight: 500; }
+  span:last-child { color: $text-secondary; flex: 1; }
 }
 
-.subsystem-dot {
-  width: 8px;
-  height: 8px;
+.alert-dot {
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
-  background: #7f90aa;
+  flex-shrink: 0;
+
+  .bad & { background: $red; box-shadow: 0 0 8px rgba($red, 0.9); }
+  .warn & { background: $yellow; box-shadow: 0 0 8px rgba($yellow, 0.9); }
 }
 
-.subsystem-row.good .subsystem-dot { background: #6ee7b7; box-shadow: 0 0 10px rgba(110, 231, 183, 0.9); }
-.subsystem-row.warn .subsystem-dot { background: #fcd34d; box-shadow: 0 0 10px rgba(252, 211, 77, 0.9); }
-.subsystem-row.bad .subsystem-dot { background: #f87171; box-shadow: 0 0 10px rgba(248, 113, 113, 0.9); }
-
-.refined-watch {
-  align-items: stretch;
+.load-error {
+  padding: 10px 14px;
+  border-radius: 14px;
+  border: 1px solid rgba($yellow, 0.22);
+  background: rgba($yellow, 0.06);
+  color: $yellow;
+  font-size: 12px;
 }
 
-.refined-watch-list {
-  margin-top: 20px;
-  display: grid;
-  gap: 12px;
+// ─── Hover ───────────────────────────────────────────────
+.signal-card,
+.ring-panel,
+.stream-panel {
+  transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease;
+
+  &:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 28px 52px rgba(0,0,0,0.28);
+    border-color: $border-bright;
+  }
 }
 
-.watch-item {
-  display: grid;
-  gap: 5px;
-  padding: 13px 15px;
-  border-radius: 18px;
-  background: rgba(4, 10, 21, 0.62);
-  border: 1px solid rgba(255, 255, 255, 0.04);
+.ring-stat,
+.sub-row,
+.model-row,
+.signal-row,
+.stream-meta-item {
+  transition: background 140ms ease, border-color 140ms ease;
 }
 
-.watch-item.good {
-  border-color: rgba(110, 231, 183, 0.18);
-}
+.ring-stat:hover { background: rgba(6,14,26,0.82) !important; }
+.sub-row:hover { background: rgba(6,14,26,0.82) !important; border-color: rgba(99,231,255,0.12) !important; }
+.model-row:hover { background: rgba(6,14,26,0.82) !important; }
+.signal-row:hover { background: rgba(6,14,26,0.82) !important; }
 
-.watch-item.warn {
-  border-color: rgba(251, 191, 36, 0.2);
-}
-
-.watch-item.bad {
-  border-color: rgba(248, 113, 113, 0.22);
-}
-
-@keyframes sweep {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
-}
-
-@media (max-width: 1400px) {
-  .status-spine,
-  .hero-grid,
-  .watch-grid {
+// ─── Responsive ──────────────────────────────────────────
+@media (max-width: 1100px) {
+  .hero-area {
     grid-template-columns: 1fr;
   }
 
-  .metrics-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .ring-stage {
+    min-height: 160px;
   }
 
-  .token-card,
-  .subsystem-card,
-  .metrics-grid > .metric-card:not(.token-card):not(.subsystem-card) {
-    grid-column: span 1;
+  .signal-panels {
+    grid-template-columns: 1fr 1fr;
   }
 }
 
-@media (max-width: 900px) {
-  .monitor-view {
-    padding: 16px;
+@media (max-width: 680px) {
+  .command-view {
+    padding: 14px;
+    gap: 12px;
   }
 
-  .home-header {
+  .status-strip {
     flex-direction: column;
-  }
-
-  .header-actions {
-    align-items: center;
-    justify-content: space-between;
-  }
-
-  .status-spine,
-  .metrics-grid,
-  .watch-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .activity-meta {
-    grid-template-columns: 1fr;
-  }
-
-  .title-line {
     align-items: flex-start;
+    gap: 12px;
+  }
+
+  .strip-metrics {
+    justify-content: flex-start;
+    flex-wrap: wrap;
+    gap: 0;
+  }
+
+  .strip-actions {
+    margin-left: 0;
+  }
+
+  .signal-panels {
+    grid-template-columns: 1fr;
+  }
+
+  .stream-meta-row {
+    grid-template-columns: repeat(2, 1fr);
   }
 }
 </style>
