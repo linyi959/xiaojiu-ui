@@ -25,6 +25,46 @@ const currentTime = ref(new Date())
 let clockTimer: ReturnType<typeof setInterval>
 let pollTimer: ReturnType<typeof setInterval>
 
+// ── Entrance animation ───────────────────────────────────────────────────────
+const animStarted = ref(false)
+let animFrame: number
+
+function easeOutCubic(t: number) { return 1 - Math.pow(1 - t, 3) }
+
+function useCountUp(to: number, ms: number, cb: (v: number) => void) {
+  const start = performance.now()
+  const from = 0
+  function step(now: number) {
+    const t = Math.min((now - start) / ms, 1)
+    cb(Math.round(from + (to - from) * easeOutCubic(t)))
+    if (t < 1) animFrame = requestAnimationFrame(step)
+  }
+  animFrame = requestAnimationFrame(step)
+}
+
+function startAnimations() {
+  animStarted.value = true
+  useCountUp(usageStore.totalTokens, 900, v => { animTokens.value = v })
+  useCountUp(usageStore.totalSessions, 900, v => { animSessions.value = v })
+  useCountUp(configuredChannels.value, 800, v => { animChan.value = v })
+  useCountUp(runningJobs.value, 700, v => { animJobs.value = v })
+  useCountUp(pausedJobs.value, 700, v => { animJobsPause.value = v })
+  useCountUp(overallHealth.value, 900, v => { animHealth.value = v })
+}
+
+const animTokens = ref(0)
+const animSessions = ref(0)
+const animChan = ref(0)
+const animJobs = ref(0)
+const animJobsPause = ref(0)
+const animHealth = ref(0)
+
+const fmtAnim = (v: number) => {
+  if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`
+  if (v >= 1_000) return `${(v / 1_000).toFixed(1)}K`
+  return String(v)
+}
+
 const totalSkills = computed(() => skills.value.categories.reduce((s: number, c: SkillCategory) => s + c.skills.length, 0))
 const enabledSkills = computed(() => skills.value.categories.reduce((s: number, c: SkillCategory) => s + c.skills.filter((sk: SkillInfo) => sk.enabled !== false).length, 0))
 const totalModels = computed(() => appStore.modelGroups.reduce((s: number, g) => s + g.models.length, 0))
@@ -297,11 +337,14 @@ onMounted(() => {
   refresh()
   clockTimer = setInterval(() => { currentTime.value = new Date() }, 1000)
   pollTimer = setInterval(() => refresh(), 30_000)
+  // Delay slightly so data is loaded before animation starts
+  setTimeout(() => startAnimations(), 120)
 })
 
 onUnmounted(() => {
   clearInterval(clockTimer)
   clearInterval(pollTimer)
+  cancelAnimationFrame(animFrame)
 })
 </script>
 
@@ -335,16 +378,16 @@ onUnmounted(() => {
         <div class="tm-cell">
           <span class="tm-label">TASKS</span>
           <span class="tm-value">
-            <span class="txt-cyan">{{ runningJobs }}</span>
+            <span class="txt-cyan">{{ animStarted ? animJobs : runningJobs }}</span>
             <span class="txt-sep">/</span>
-            <span class="txt-dim">{{ pausedJobs }}</span>
+            <span class="txt-dim">{{ animStarted ? animJobsPause : pausedJobs }}</span>
             <span v-if="failedJobs" class="txt-red">/ {{ failedJobs }}</span>
           </span>
         </div>
         <div class="tm-sep" />
         <div class="tm-cell">
           <span class="tm-label">TOKEN</span>
-          <span class="tm-value">{{ fmt(usageStore.totalTokens) }}</span>
+          <span class="tm-value">{{ animStarted ? fmtAnim(animTokens) : fmt(usageStore.totalTokens) }}</span>
         </div>
         <div class="tm-sep" />
         <div class="tm-cell">
@@ -361,12 +404,12 @@ onUnmounted(() => {
         <div class="tm-sep" />
         <div class="tm-cell">
           <span class="tm-label">SESS</span>
-          <span class="tm-value">{{ usageStore.totalSessions }}</span>
+          <span class="tm-value">{{ animStarted ? fmtAnim(animSessions) : usageStore.totalSessions }}</span>
         </div>
         <div class="tm-sep" />
         <div class="tm-cell">
           <span class="tm-label">CHAN</span>
-          <span class="tm-value">{{ configuredChannels }}/{{ channels.length }}</span>
+          <span class="tm-value">{{ animStarted ? animChan : configuredChannels }}/{{ channels.length }}</span>
         </div>
       </div>
 
@@ -386,7 +429,7 @@ onUnmounted(() => {
     <section class="hero-grid">
 
       <!-- A: Health Radar -->
-      <article class="panel radar-panel">
+      <article class="panel radar-panel entrance-1">
         <div class="panel-cap">
           <span class="cap-label">SYSTEM HEALTH</span>
           <span class="cap-badge" :class="overallHealth >= 80 ? 'green' : overallHealth >= 50 ? 'amber' : 'red'">
@@ -424,7 +467,7 @@ onUnmounted(() => {
               </radialGradient>
             </defs>
             <!-- Health % -->
-            <text x="60" y="55" text-anchor="middle" class="ring-pct-text" fill="#e2eaf4" font-size="16" font-weight="700" font-family="Fira Code, monospace">{{ overallHealth }}</text>
+            <text x="60" y="55" text-anchor="middle" class="ring-pct-text" fill="#e2eaf4" font-size="16" font-weight="700" font-family="Fira Code, monospace">{{ animStarted ? animHealth : overallHealth }}</text>
             <text x="60" y="67" text-anchor="middle" fill="#64748b" font-size="7" font-family="Fira Code, monospace" letter-spacing="1">HEALTH</text>
           </svg>
 
@@ -439,7 +482,7 @@ onUnmounted(() => {
       </article>
 
       <!-- B: 30-day Activity Stream -->
-      <article class="panel stream-panel">
+      <article class="panel stream-panel entrance-2">
         <div class="panel-cap">
           <span class="cap-label">ACTIVITY STREAM · 30d</span>
           <div class="cap-stats">
@@ -494,7 +537,7 @@ onUnmounted(() => {
     <section class="mid-grid">
 
       <!-- C: Job Queue -->
-      <article class="panel job-panel">
+      <article class="panel job-panel entrance-3">
         <div class="panel-cap">
           <span class="cap-label">MISSION QUEUE</span>
           <span class="cap-badge" :class="failedJobs ? 'red' : runningJobs ? 'green' : 'dim'">
@@ -523,7 +566,7 @@ onUnmounted(() => {
       </article>
 
       <!-- D: Resource (Token / Skills) -->
-      <article class="panel resource-panel">
+      <article class="panel resource-panel entrance-4">
         <div class="panel-cap">
           <span class="cap-label">RESOURCE PULSE</span>
         </div>
@@ -627,7 +670,7 @@ onUnmounted(() => {
       </article>
 
       <!-- E: Channels -->
-      <article class="panel channel-panel">
+      <article class="panel channel-panel entrance-5">
         <div class="panel-cap">
           <span class="cap-label">CHANNEL STATUS</span>
           <span class="cap-badge" :class="configuredChannels === channels.length && channels.length > 0 ? 'green' : 'amber'">
@@ -766,7 +809,8 @@ $text-dim: #3d5a80;
   font-size: 16px;
   font-weight: 700;
   color: $cyan;
-  text-shadow: 0 0 14px rgba(103, 232, 249, 0.8);
+  text-shadow: 0 0 16px rgba(103, 232, 249, 0.9), 0 0 32px rgba(103, 232, 249, 0.4);
+  box-shadow: 0 0 14px rgba(103, 232, 249, 0.3), inset 0 1px 0 rgba(255,255,255,0.1);
   flex-shrink: 0;
 }
 
@@ -866,6 +910,7 @@ $text-dim: #3d5a80;
   font-size: 13px;
   color: $text-primary;
   font-variant-numeric: tabular-nums;
+  text-shadow: 0 0 12px rgba(103, 232, 249, 0.3);
 }
 
 .clock-date {
@@ -892,6 +937,20 @@ $text-dim: #3d5a80;
   50% { box-shadow: 0 0 14px rgba($green, 1); opacity: 0.75; }
 }
 
+// ─── Panel Entrance Animations ───────────────────────────────────────────────
+@keyframes fadeSlideIn {
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.panel {
+  &.entrance-1 { animation: fadeSlideIn 480ms cubic-bezier(0.16, 1, 0.3, 1) both; animation-delay: 60ms; }
+  &.entrance-2 { animation: fadeSlideIn 480ms cubic-bezier(0.16, 1, 0.3, 1) both; animation-delay: 140ms; }
+  &.entrance-3 { animation: fadeSlideIn 480ms cubic-bezier(0.16, 1, 0.3, 1) both; animation-delay: 220ms; }
+  &.entrance-4 { animation: fadeSlideIn 480ms cubic-bezier(0.16, 1, 0.3, 1) both; animation-delay: 300ms; }
+  &.entrance-5 { animation: fadeSlideIn 480ms cubic-bezier(0.16, 1, 0.3, 1) both; animation-delay: 380ms; }
+}
+
 // ─── Panel Base ─────────────────────────────────────────────────────────────
 .panel {
   background: $bg-panel;
@@ -902,6 +961,13 @@ $text-dim: #3d5a80;
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  transition: transform 200ms ease, border-color 200ms ease, box-shadow 200ms ease;
+
+  &:hover {
+    transform: translateY(-2px);
+    border-color: rgba(168, 216, 255, 0.18);
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(168, 216, 255, 0.06);
+  }
 
   &::after {
     content: '';
@@ -998,6 +1064,12 @@ $text-dim: #3d5a80;
 
 .ring-pct-text {
   font-family: 'Fira Code', monospace;
+  animation: textBreathe 3s ease-in-out infinite;
+}
+
+@keyframes textBreathe {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.8; }
 }
 
 .radar-legend {
@@ -1089,6 +1161,13 @@ $text-dim: #3d5a80;
   background: rgba(0, 0, 0, 0.3);
   border: 1px solid rgba(168, 216, 255, 0.04);
   min-height: 0;
+  transition: background 150ms ease, transform 150ms ease, border-color 150ms ease;
+
+  &:hover {
+    background: rgba(0, 0, 0, 0.5);
+    transform: translateX(2px);
+    border-color: rgba(168, 216, 255, 0.1);
+  }
 
   &.running { border-color: rgba($green, 0.15); }
   &.paused { opacity: 0.65; }
@@ -1096,14 +1175,14 @@ $text-dim: #3d5a80;
 }
 
 .job-indicator {
-  width: 6px;
-  height: 6px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   flex-shrink: 0;
 
-  &.running { background: $green; box-shadow: 0 0 6px rgba($green, 0.8); }
+  &.running { background: $green; box-shadow: 0 0 8px rgba($green, 0.9), 0 0 16px rgba($green, 0.4); }
   &.paused { background: $text-dim; }
-  &.bad { background: $red; box-shadow: 0 0 6px rgba($red, 0.8); animation: blink 1.8s ease-in-out infinite; }
+  &.bad { background: $red; box-shadow: 0 0 8px rgba($red, 0.9), 0 0 16px rgba($red, 0.4); animation: blink 1.8s ease-in-out infinite; }
 }
 
 @keyframes blink {
@@ -1225,7 +1304,7 @@ $text-dim: #3d5a80;
   color: $text-primary;
   letter-spacing: -0.02em;
   font-variant-numeric: tabular-nums;
-  text-shadow: 0 0 20px rgba(103, 232, 249, 0.25);
+  text-shadow: 0 0 24px rgba(103, 232, 249, 0.4), 0 0 48px rgba(103, 232, 249, 0.15);
 }
 
 .token-unit {
