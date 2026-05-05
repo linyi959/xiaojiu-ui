@@ -330,6 +330,8 @@ async function refresh() {
     lastUpdated.value = new Date().toLocaleTimeString('zh-CN', { hour12: false })
   } finally {
     loading.value = false
+    // Start animations only after data is loaded
+    if (!animStarted.value) startAnimations()
   }
 }
 
@@ -337,8 +339,6 @@ onMounted(() => {
   refresh()
   clockTimer = setInterval(() => { currentTime.value = new Date() }, 1000)
   pollTimer = setInterval(() => refresh(), 30_000)
-  // Delay slightly so data is loaded before animation starts
-  setTimeout(() => startAnimations(), 120)
 })
 
 onUnmounted(() => {
@@ -439,7 +439,23 @@ onUnmounted(() => {
 
         <div class="radar-body">
           <svg class="radar-svg" viewBox="0 0 120 120" aria-label="系统健康雷达">
-            <!-- Outer tick ring -->
+            <defs>
+              <radialGradient id="radarGlow" cx="50%" cy="50%" r="50%">
+                <stop offset="0%" stop-color="#0a1a2e" />
+                <stop offset="100%" stop-color="#040810" />
+              </radialGradient>
+              <linearGradient id="sweepGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+                <stop offset="0%" stop-color="#67e8f9" stop-opacity="0" />
+                <stop offset="75%" stop-color="#67e8f9" stop-opacity="0.18" />
+                <stop offset="100%" stop-color="#a8d8ff" stop-opacity="0.45" />
+              </linearGradient>
+              <filter id="sweepGlow">
+                <feGaussianBlur stdDeviation="2" result="blur" />
+                <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
+              </filter>
+            </defs>
+
+            <!-- Outer tick ring — slow CW rotation -->
             <g class="tick-ring">
               <line
                 v-for="(tick, i) in outerTicks"
@@ -450,22 +466,31 @@ onUnmounted(() => {
                 :stroke-width="tick.major ? 1.5 : 0.8"
               />
             </g>
-            <!-- Subsystem arcs -->
-            <path
-              v-for="(sub, i) in subsystems"
-              :key="sub.name"
-              :d="arcPath(i, sub.tone)"
-              :fill="TONE_COLOR[sub.tone] || '#4b5563'"
-              :fill-opacity="0.85"
-            />
+
+            <!-- Scanning sweep arc — fast CCW -->
+            <g class="sweep-ring" transform-origin="60 60">
+              <path
+                d="M 60 6 A 54 54 0 0 1 114 60 L 60 60 Z"
+                fill="url(#sweepGrad)"
+                filter="url(#sweepGlow)"
+              />
+            </g>
+
+            <!-- Subsystem arcs — breathing glow -->
+            <g class="arcs-ring">
+              <path
+                v-for="(sub, i) in subsystems"
+                :key="sub.name"
+                :d="arcPath(i, sub.tone)"
+                :fill="TONE_COLOR[sub.tone] || '#4b5563'"
+                class="sub-arc"
+                :style="{ animationDelay: `${i * 0.3}s` }"
+              />
+            </g>
+
             <!-- Center glow -->
             <circle cx="60" cy="60" r="38" fill="url(#radarGlow)" />
-            <defs>
-              <radialGradient id="radarGlow" cx="50%" cy="50%" r="50%">
-                <stop offset="0%" stop-color="#0a1a2e" />
-                <stop offset="100%" stop-color="#040810" />
-              </radialGradient>
-            </defs>
+
             <!-- Health % -->
             <text x="60" y="55" text-anchor="middle" class="ring-pct-text" fill="#e2eaf4" font-size="16" font-weight="700" font-family="Fira Code, monospace">{{ animStarted ? animHealth : overallHealth }}</text>
             <text x="60" y="67" text-anchor="middle" fill="#64748b" font-size="7" font-family="Fira Code, monospace" letter-spacing="1">HEALTH</text>
@@ -1060,6 +1085,39 @@ $text-dim: #3d5a80;
   width: 180px;
   height: 180px;
   flex-shrink: 0;
+}
+
+// Tick ring — slow clockwise rotation (simulates radar clock)
+.tick-ring {
+  transform-origin: 60px 60px;
+  animation: radarSpin 24s linear infinite;
+}
+
+@keyframes radarSpin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+// Scanning sweep — fast counter-clockwise
+.sweep-ring {
+  transform-origin: 60px 60px;
+  animation: sweepSpin 6s linear infinite;
+}
+
+@keyframes sweepSpin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(-360deg); }
+}
+
+// Subsystem arcs — breathing glow
+.sub-arc {
+  animation: arcBreathe 2.8s ease-in-out infinite alternate;
+  transform-origin: 60px 60px;
+}
+
+@keyframes arcBreathe {
+  0%   { filter: brightness(1);   opacity: 0.85; }
+  100% { filter: brightness(1.6); opacity: 1; }
 }
 
 .ring-pct-text {
