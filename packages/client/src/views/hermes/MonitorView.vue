@@ -5,6 +5,7 @@ import { NButton } from 'naive-ui'
 import { useAppStore } from '@/stores/hermes/app'
 import { useJobsStore } from '@/stores/hermes/jobs'
 import { useUsageStore } from '@/stores/hermes/usage'
+import { fetchConfig, type AppConfig } from '@/api/hermes/config'
 import { checkHealth, type HealthResponse } from '@/api/hermes/system'
 import { fetchSkills, fetchMemory, type MemoryData, type SkillCategory, type SkillInfo } from '@/api/hermes/skills'
 
@@ -15,12 +16,14 @@ const usageStore = useUsageStore()
 
 const loading = ref(false)
 const health = ref<HealthResponse | null>(null)
+const platforms = ref<AppConfig['platforms']>({})
 const skills = ref<{ categories: SkillCategory[], archived: SkillInfo[] }>({ categories: [], archived: [] })
 const memory = ref<MemoryData | null>(null)
 const lastUpdated = ref('—')
 const loadError = ref('')
 const currentTime = ref(new Date())
 let clockTimer: ReturnType<typeof setInterval>
+let pollTimer: ReturnType<typeof setInterval>
 
 const totalSkills = computed(() => skills.value.categories.reduce((s: number, c: SkillCategory) => s + c.skills.length, 0))
 const enabledSkills = computed(() => skills.value.categories.reduce((s: number, c: SkillCategory) => s + c.skills.filter((sk: SkillInfo) => sk.enabled !== false).length, 0))
@@ -187,18 +190,35 @@ const skillStats = computed(() => {
 
 const topSkills = computed(() => {
   const all = skills.value.categories.flatMap(c => c.skills)
-  return all.sort((a: any, b: any) => (b.call_count ?? 0) - (a.call_count ?? 0)).slice(0, 5)
+  return all.sort((a: any, b: any) => (b.useCount ?? 0) - (a.useCount ?? 0)).slice(0, 5)
 })
 
 // ── Channels ──────────────────────────────────────────────────────────────
+const ALL_CHANNELS = ['telegram', 'discord', 'feishu', 'slack', 'whatsapp', 'weixin', 'wecom', 'dingtalk', 'matrix']
+
+const CHANNEL_META: Record<string, { label: string; icon: string }> = {
+  telegram: { label: 'Telegram', icon: 'TG' },
+  discord: { label: 'Discord', icon: 'DC' },
+  feishu: { label: 'Feishu', icon: 'FS' },
+  slack: { label: 'Slack', icon: 'SL' },
+  whatsapp: { label: 'WhatsApp', icon: 'WA' },
+  weixin: { label: 'Weixin', icon: 'WX' },
+  wecom: { label: 'WeCom', icon: 'WC' },
+  dingtalk: { label: 'DingTalk', icon: 'DT' },
+  matrix: { label: 'Matrix', icon: 'MX' },
+}
+
 const channels = computed(() => {
-  return [
-    { name: 'Telegram', status: 'online', icon: 'TG' },
-    { name: 'Discord', status: 'offline', icon: 'DC' },
-    { name: 'Feishu', status: 'online', icon: 'FS' },
-  ]
+  return ALL_CHANNELS
+    .filter(name => platforms.value?.[name]?.enabled !== false)
+    .map(name => ({
+      name: CHANNEL_META[name]?.label ?? name,
+      icon: CHANNEL_META[name]?.icon ?? name.slice(0, 2).toUpperCase(),
+      configured: !!(platforms.value?.[name]?.token || platforms.value?.[name]?.enabled),
+    }))
 })
-const onlineChannels = computed(() => channels.value.filter(c => c.status === 'online').length)
+
+const configuredChannels = computed(() => channels.value.filter(c => c.configured).length)
 
 // ── Recent events ─────────────────────────────────────────────────────────
 const recentEvents = computed(() => {
@@ -251,15 +271,21 @@ async function refresh() {
   loading.value = true
   loadError.value = ''
   try {
-    const [hr, sr, mr, jr, mr2, cr, ur] = await Promise.allSettled([
-      checkHealth(), fetchSkills(), fetchMemory(),
-      jobsStore.fetchJobs(), appStore.loadModels(),
-      appStore.checkConnection(), usageStore.loadSessions(),
+    const [hr, cf, sr, mr, jr, ap, cr, ur] = await Promise.allSettled([
+      checkHealth(),
+      fetchConfig(['platforms']),
+      fetchSkills(),
+      fetchMemory(),
+      jobsStore.fetchJobs(),
+      appStore.loadModels(),
+      appStore.checkConnection(),
+      usageStore.loadSessions(),
     ])
     if (hr.status === 'fulfilled') health.value = hr.value
+    if (cf.status === 'fulfilled') platforms.value = cf.value?.platforms ?? {}
     if (sr.status === 'fulfilled') skills.value = sr.value
     if (mr.status === 'fulfilled') memory.value = mr.value
-    const failed = [hr, sr, mr, jr, mr2, cr, ur].filter(r => r.status === 'rejected').length
+    const failed = [hr, cf, sr, mr, jr, ap, cr, ur].filter(r => r.status === 'rejected').length
     if (failed) loadError.value = `${failed} 个数据源暂时不可用`
     lastUpdated.value = new Date().toLocaleTimeString('zh-CN', { hour12: false })
   } finally {
@@ -270,9 +296,13 @@ async function refresh() {
 onMounted(() => {
   refresh()
   clockTimer = setInterval(() => { currentTime.value = new Date() }, 1000)
+  pollTimer = setInterval(() => refresh(), 30_000)
 })
 
-onUnmounted(() => clearInterval(clockTimer))
+onUnmounted(() => {
+  clearInterval(clockTimer)
+  clearInterval(pollTimer)
+})
 </script>
 
 <template>
@@ -336,7 +366,7 @@ onUnmounted(() => clearInterval(clockTimer))
         <div class="tm-sep" />
         <div class="tm-cell">
           <span class="tm-label">CHAN</span>
-          <span class="tm-value">{{ onlineChannels }}/{{ channels.length }}</span>
+          <span class="tm-value">{{ configuredChannels }}/{{ channels.length }}</span>
         </div>
       </div>
 
@@ -600,17 +630,17 @@ onUnmounted(() => clearInterval(clockTimer))
       <article class="panel channel-panel">
         <div class="panel-cap">
           <span class="cap-label">CHANNEL STATUS</span>
-          <span class="cap-badge" :class="onlineChannels === channels.length ? 'green' : 'amber'">
-            {{ onlineChannels }}/{{ channels.length }} ONLINE
+          <span class="cap-badge" :class="configuredChannels === channels.length && channels.length > 0 ? 'green' : 'amber'">
+            {{ configuredChannels }}/{{ channels.length }} CONFIGURED
           </span>
         </div>
 
         <div class="channel-list">
-          <div v-for="ch in channels" :key="ch.name" class="ch-row" :class="ch.status">
+          <div v-for="ch in channels" :key="ch.name" class="ch-row" :class="ch.configured ? 'online' : 'offline'">
             <span class="ch-icon">{{ ch.icon }}</span>
             <span class="ch-name">{{ ch.name }}</span>
-            <span class="ch-status-dot" :class="ch.status" />
-            <span class="ch-status-text">{{ ch.status === 'online' ? '在线' : ch.status === 'offline' ? '离线' : '未知' }}</span>
+            <span class="ch-status-dot" :class="ch.configured ? 'online' : 'offline'" />
+            <span class="ch-status-text">{{ ch.configured ? '已配置' : '未配置' }}</span>
           </div>
         </div>
       </article>
