@@ -34,7 +34,7 @@ let animFrame: number
 const tooltip = ref({ visible: false, x: 0, y: 0, date: '', sessions: 0 })
 
 // Chart crosshair — vertical line + dot following mouse
-const crosshair = ref({ visible: false, x: 0, y: 0, svgX: 0 })
+const crosshair = ref({ visible: false, x: 0, y: 0, svgX: 0, svgMouseX: 0 })
 
 function onChartHover(e: MouseEvent) {
   const svg = (e.currentTarget as SVGElement)
@@ -58,7 +58,8 @@ function onChartHover(e: MouseEvent) {
     visible: true,
     x: pixelX,
     y: pixelY,
-    svgX: pt.x,
+    svgX: pt.x,      // snapped data-point x in SVG units — for halo ring
+    svgMouseX: svgX, // exact mouse x in SVG units — for the vertical line
   }
 }
 
@@ -678,17 +679,17 @@ onUnmounted(() => {
 
             <!-- ── Crosshair — follows mouse, shows nearest data point ── -->
             <template v-if="crosshair.visible">
-              <!-- Vertical hair line -->
+              <!-- Vertical hair line — follows exact mouse x in SVG units -->
               <line
-                :x1="(crosshair.x * 864 / 100).toFixed(1)"
+                :x1="crosshair.svgMouseX.toFixed(1)"
                 y1="0"
-                :x2="(crosshair.x * 864 / 100).toFixed(1)"
+                :x2="crosshair.svgMouseX.toFixed(1)"
                 y2="120"
                 stroke="rgba(168,216,255,0.2)"
                 stroke-width="0.5"
                 stroke-dasharray="3 3"
               />
-              <!-- Nearest data point halo ring -->
+              <!-- Nearest data point halo ring — svgX is the snapped data point x in SVG units -->
               <circle
                 :cx="crosshair.svgX.toFixed(1)"
                 cy="0"
