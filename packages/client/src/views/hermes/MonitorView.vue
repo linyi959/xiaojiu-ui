@@ -29,7 +29,7 @@ let pollTimer: ReturnType<typeof setInterval>
 // ── Entrance animation ───────────────────────────────────────────────────────
 const animStarted = ref(false)
 const chartAnimKey = ref(0) // increments to retrigger SVG stroke-dashoffset animation
-let animFrame: number
+const animFrames = new Set<number>()
 
 // Chart tooltip
 const tooltip = ref({ visible: false, x: 0, y: 0, date: '', sessions: 0 })
@@ -40,6 +40,7 @@ const crosshair = ref({ visible: false, x: 0, y: 0, svgX: 0, svgY: 0, svgMouseX:
 function onChartHover(e: MouseEvent) {
   const svg = (e.currentTarget as SVGElement)
   const rect = svg.getBoundingClientRect()
+  if (rect.width === 0) return
   const scaleX = 864 / rect.width
   const pixelX = e.clientX - rect.left
   const pts = activityDays.value
@@ -84,9 +85,11 @@ function useCountUp(to: number, ms: number, cb: (v: number) => void) {
   function step(now: number) {
     const t = Math.min((now - start) / ms, 1)
     cb(Math.round(from + (to - from) * easeOutCubic(t)))
-    if (t < 1) animFrame = requestAnimationFrame(step)
+    if (t < 1) {
+      animFrames.add(requestAnimationFrame(step))
+    }
   }
-  animFrame = requestAnimationFrame(step)
+  animFrames.add(requestAnimationFrame(step))
 }
 
 function startAnimations() {
@@ -319,7 +322,6 @@ const channels = computed(() => {
         configured,
       }
     })
-    .filter(channel => channel.configured)
 })
 
 const configuredChannels = computed(() => channels.value.filter(c => c.configured).length)
@@ -424,7 +426,8 @@ onMounted(() => {
 onUnmounted(() => {
   clearInterval(clockTimer)
   clearInterval(pollTimer)
-  cancelAnimationFrame(animFrame)
+  for (const id of animFrames) cancelAnimationFrame(id)
+  animFrames.clear()
 })
 </script>
 

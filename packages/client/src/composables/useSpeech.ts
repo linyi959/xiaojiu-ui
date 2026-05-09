@@ -167,7 +167,12 @@ export function useSpeech() {
     // 创建新的 utterance
     if (!synth || !SpeechUtteranceCtor) return
 
-    utterance = new SpeechUtteranceCtor(text)
+    try {
+      utterance = new SpeechUtteranceCtor(text)
+    } catch (e) {
+      console.warn('[useSpeech] Failed to create SpeechSynthesisUtterance:', e)
+      return
+    }
     currentText = text
 
     // 设置语音参数
@@ -216,7 +221,14 @@ export function useSpeech() {
 
     // 开始播放
     console.log('[useSpeech] Calling synth.speak()')
-    synth.speak(utterance)
+    try {
+      synth.speak(utterance)
+    } catch (e) {
+      console.warn('[useSpeech] Failed to call synth.speak():', e)
+      state.value.isPlaying = false
+      state.value.currentMessageId = null
+      utterance = null
+    }
   }
 
   /**

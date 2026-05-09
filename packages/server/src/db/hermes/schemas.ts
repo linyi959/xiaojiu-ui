@@ -442,9 +442,9 @@ function syncIndexes(
   const existingNames = new Set(existingIndexes.map(i => i.name))
   const expectedNames = new Set(Object.keys(indexes))
 
-  // 删除多余索引
+  // 删除多余索引（不在期望列表中的）
   for (const name of existingNames) {
-    if (expectedNames.has(name)) {
+    if (!expectedNames.has(name)) {
       try { db.exec(`DROP INDEX ${quoteIdentifier(name)}`) } catch { }
     }
   }

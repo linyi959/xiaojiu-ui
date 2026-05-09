@@ -773,6 +773,305 @@ export const useChatStore = defineStore('chat', () => {
     target.updatedAt = Date.now()
   }
 
+  // Shared event dispatcher — processes a single run event against store state.
+  // Returns 'continue' | 'completed' | 'failed' so the caller can handle cleanup.
+  function processRunEvent(sid: string, evt: RunEvent, flags: { producedText: boolean; hadToolActivity: boolean }): 'continue' | 'completed' | 'failed' {
+    switch (evt.event) {
+      case 'run.started':
+        break
+
+      case 'compression.started': {
+        setCompressionState({
+          compressing: true,
+          messageCount: (evt as any).message_count || 0,
+          beforeTokens: (evt as any).token_count || 0,
+          afterTokens: 0,
+          compressed: null,
+        })
+        break
+      }
+
+      case 'compression.completed': {
+        setCompressionState({
+          compressing: false,
+          messageCount: (evt as any).totalMessages || 0,
+          beforeTokens: (evt as any).beforeTokens || 0,
+          afterTokens: (evt as any).afterTokens || 0,
+          compressed: (evt as any).compressed ?? false,
+          error: (evt as any).error,
+        })
+        setTimeout(() => {
+          if (compressionState.value && !compressionState.value.compressing) {
+            setCompressionState(null)
+          }
+        }, 5000)
+        break
+      }
+
+      case 'reasoning.delta':
+      case 'thinking.delta': {
+        const text = evt.text || evt.delta || ''
+        if (!text) break
+        flags.producedText = true
+        const msgs = getSessionMsgs(sid)
+        let assistantMsg = msgs[msgs.length - 1]
+        if (assistantMsg?.role === 'assistant' && assistantMsg.isStreaming) {
+          assistantMsg.reasoning = (assistantMsg.reasoning || '') + text
+          noteReasoningStart(assistantMsg.id)
+          if (!assistantMsg.phases) assistantMsg.phases = []
+          const phases = assistantMsg.phases
+          const lastPhase = phases[phases.length - 1]
+          if (lastPhase && lastPhase.type === 'thinking' && lastPhase.isStreaming) {
+            lastPhase.content += text
+          } else {
+            phases.push({
+              id: uid(),
+              type: 'thinking',
+              content: text,
+              isStreaming: true,
+              timestamp: Date.now(),
+            })
+          }
+        } else {
+          const newId = uid()
+          addMessage(sid, {
+            id: newId,
+            role: 'assistant',
+            content: '',
+            timestamp: Date.now(),
+            isStreaming: true,
+            reasoning: text,
+            phases: [{
+              id: uid(),
+              type: 'thinking',
+              content: text,
+              isStreaming: true,
+              timestamp: Date.now(),
+            }],
+          })
+          noteReasoningStart(newId)
+        }
+        break
+      }
+
+      case 'reasoning.available': {
+        const msgs = getSessionMsgs(sid)
+        const last = msgs[msgs.length - 1]
+        if (last?.role === 'assistant' && last.isStreaming) {
+          noteReasoningEnd(last.id)
+          if (last.phases && last.phases.length > 0) {
+            const lastPhase = last.phases[last.phases.length - 1]
+            if (lastPhase.type === 'thinking' && lastPhase.isStreaming) {
+              lastPhase.isStreaming = false
+            }
+          }
+        }
+        break
+      }
+
+      case 'message.delta': {
+        if (evt.delta) flags.producedText = true
+        const msgs = getSessionMsgs(sid)
+        const last = msgs[msgs.length - 1]
+        if (last?.role === 'assistant' && last.isStreaming) {
+          const prev = last.content
+          const next = prev + (evt.delta || '')
+          noteThinkingDelta(last.id, prev, next)
+          if (last.reasoning) noteReasoningEnd(last.id)
+          last.content = next
+          if (!last.phases) last.phases = []
+          const phases = last.phases
+          const lastPhase = phases[phases.length - 1]
+          if (lastPhase && lastPhase.type === 'final' && lastPhase.isStreaming) {
+            lastPhase.content += (evt.delta || '')
+          } else {
+            phases.push({
+              id: uid(),
+              type: 'final',
+              content: evt.delta || '',
+              isStreaming: true,
+              timestamp: Date.now(),
+            })
+          }
+        } else {
+          const newId = uid()
+          const delta = evt.delta || ''
+          noteThinkingDelta(newId, '', delta)
+          addMessage(sid, {
+            id: newId,
+            role: 'assistant',
+            content: delta,
+            timestamp: Date.now(),
+            isStreaming: true,
+            phases: [{
+              id: uid(),
+              type: 'final',
+              content: delta,
+              isStreaming: true,
+              timestamp: Date.now(),
+            }],
+          })
+        }
+        break
+      }
+
+      case 'tool.started': {
+        flags.hadToolActivity = true
+        const msgs = getSessionMsgs(sid)
+        let assistantMsg = [...msgs].reverse().find(m => m.role === 'assistant' && m.isStreaming)
+        if (!assistantMsg) {
+          const newId = uid()
+          assistantMsg = {
+            id: newId,
+            role: 'assistant',
+            content: '',
+            timestamp: Date.now(),
+            isStreaming: true,
+            phases: [],
+          }
+          addMessage(sid, assistantMsg)
+        }
+        if (!assistantMsg.phases) assistantMsg.phases = []
+        assistantMsg.phases.push({
+          id: (evt as any).tool_call_id || uid(),
+          type: 'tool_call',
+          content: '',
+          toolName: (evt as any).tool || (evt as any).name || 'tool',
+          toolArgs: (evt as any).args || (evt as any).arguments,
+          toolPreview: (evt as any).preview || undefined,
+          toolStatus: 'running',
+          isStreaming: true,
+          timestamp: Date.now(),
+        })
+        break
+      }
+
+      case 'tool.completed': {
+        flags.hadToolActivity = true
+        const msgs = getSessionMsgs(sid)
+        const assistantMsg = [...msgs].reverse().find(m => m.role === 'assistant' && m.phases?.length)
+        const phases = assistantMsg?.phases || []
+        const phase = [...phases].reverse().find(p => p.type === 'tool_call' && p.toolStatus === 'running')
+        if (phase) {
+          const output = (evt as any).output
+          const result = output == null ? undefined : (typeof output === 'string' ? output : JSON.stringify(output))
+          const hasError = (evt as any).error === true
+          phase.toolStatus = hasError ? 'error' : 'done'
+          phase.isStreaming = false
+          phase.toolResult = result
+          phase.content = result || ''
+          phase.toolPreview = (evt as any).preview || phase.toolPreview
+          phase.toolDuration = (evt as any).duration || phase.toolDuration
+        }
+        break
+      }
+
+      case 'run.completed': {
+        const msgs = getSessionMsgs(sid)
+        const lastMsg = msgs[msgs.length - 1]
+        if (lastMsg?.isStreaming) {
+          updateMessage(sid, lastMsg.id, { isStreaming: false })
+          if (lastMsg.phases) {
+            for (const phase of lastMsg.phases) {
+              if (phase.isStreaming) phase.isStreaming = false
+            }
+          }
+        }
+        if ((evt as any).inputTokens != null) {
+          const target = sessions.value.find(s => s.id === sid)
+          if (target) {
+            target.inputTokens = (evt as any).inputTokens
+            target.outputTokens = (evt as any).outputTokens
+          }
+        }
+        // Backend-provided parsed content (stringified array format)
+        if ((evt as any).parsed_content !== undefined) {
+          const msgs2 = getSessionMsgs(sid)
+          const lastAssistant = [...msgs2].reverse().find(m => m.role === 'assistant')
+          if (lastAssistant) {
+            updateMessage(sid, lastAssistant.id, { content: (evt as any).parsed_content || '' })
+            if ((evt as any).parsed_reasoning) {
+              updateMessage(sid, lastAssistant.id, { reasoning: (evt as any).parsed_reasoning })
+            }
+          }
+        } else {
+          const finalOutput = typeof evt.output === 'string' ? evt.output : ''
+          if (!flags.producedText && finalOutput.trim() !== '') {
+            addMessage(sid, {
+              id: uid(),
+              role: 'assistant',
+              content: finalOutput,
+              timestamp: Date.now(),
+            })
+          }
+        }
+        // Detected swallowed error
+        {
+          let finalOutputTrimmed = ''
+          if ((evt as any).parsed_content !== undefined) {
+            finalOutputTrimmed = ((evt as any).parsed_content || '').trim()
+          } else {
+            finalOutputTrimmed = (typeof evt.output === 'string' ? evt.output : '').trim()
+          }
+          if (!flags.producedText && !flags.hadToolActivity && finalOutputTrimmed === '') {
+            addMessage(sid, {
+              id: uid(),
+              role: 'system',
+              content: 'Error: Agent returned no output. The model call may have failed (e.g. invalid API key, model not supported by provider, or context exceeded). Check the hermes-agent logs for details.',
+              timestamp: Date.now(),
+            })
+          }
+        }
+        return 'completed'
+      }
+
+      case 'run.failed': {
+        const msgs = getSessionMsgs(sid)
+        const lastErr = msgs[msgs.length - 1]
+        if (lastErr?.isStreaming) {
+          updateMessage(sid, lastErr.id, {
+            isStreaming: false,
+            content: evt.error ? `Error: ${evt.error}` : 'Run failed',
+            role: 'system',
+          })
+          if (lastErr.phases) {
+            for (const phase of lastErr.phases) {
+              if (phase.isStreaming) phase.isStreaming = false
+            }
+          }
+        } else {
+          addMessage(sid, {
+            id: uid(),
+            role: 'system',
+            content: evt.error ? `Error: ${evt.error}` : 'Run failed',
+            timestamp: Date.now(),
+          })
+        }
+        for (const m of msgs) {
+          if (m.role === 'assistant' && m.phases) {
+            for (const p of m.phases) {
+              if (p.type === 'tool_call' && p.toolStatus === 'running') {
+                p.toolStatus = 'error'
+                p.isStreaming = false
+              }
+            }
+          }
+        }
+        return 'failed'
+      }
+
+      case 'usage.updated': {
+        const target = sessions.value.find(s => s.id === sid)
+        if (target) {
+          target.inputTokens = (evt as any).inputTokens
+          target.outputTokens = (evt as any).outputTokens
+        }
+        break
+      }
+    }
+    return 'continue'
+  }
+
   async function sendMessage(content: string, attachments?: Attachment[]) {
     if ((!content.trim() && !(attachments && attachments.length > 0)) || isStreaming.value) return
 
@@ -843,384 +1142,30 @@ export const useChatStore = defineStore('chat', () => {
         console.log('[sendMessage] cleanup done, isStreaming now:', isStreaming.value)
       }
 
-      // Per-run flags used to detect silently-swallowed errors at run.completed.
-      // hermes-agent occasionally emits run.completed with empty output and no
-      // usage when the agent layer caught an upstream error (e.g. invalid API
-      // key). We need to distinguish: (a) run with assistant text produced,
-      // (b) run with only tool activity, (c) run with truly nothing visible.
-      // Reset per send() call — closures captured by Socket.IO callbacks are scoped
-      // to this run, so there is no cross-run contamination.
-      let runProducedAssistantText = false
-      let runHadToolActivity = false
 
       // Send run via Socket.IO and listen to streamed events — all closures capture `sid`
+      const runFlags = { producedText: false, hadToolActivity: false }
       const ctrl = startRunViaSocket(
         runPayload,
-        // onEvent
+        // onEvent — delegates to shared processRunEvent
         (evt: RunEvent) => {
-          switch (evt.event) {
-            case 'run.started':
-              break
-
-            case 'compression.started': {
-              setCompressionState({
-                compressing: true,
-                messageCount: (evt as any).message_count || 0,
-                beforeTokens: (evt as any).token_count || 0,
-                afterTokens: 0,
-                compressed: null,
-              })
-              break
-            }
-
-            case 'compression.completed': {
-              setCompressionState({
-                compressing: false,
-                messageCount: (evt as any).totalMessages || 0,
-                beforeTokens: (evt as any).beforeTokens || 0,
-                afterTokens: (evt as any).afterTokens || 0,
-                compressed: (evt as any).compressed ?? false,
-                error: (evt as any).error,
-              })
-              // Auto-clear after 5s
-              setTimeout(() => {
-                if (compressionState.value && !compressionState.value.compressing) {
-                  setCompressionState(null)
-                }
-              }, 5000)
-              break
-            }
-
-            case 'reasoning.delta':
-            case 'thinking.delta': {
-              const text = evt.text || evt.delta || ''
-              if (!text) break
-              runProducedAssistantText = true
+          const result = processRunEvent(sid, evt, runFlags)
+          if (result === 'completed') {
+            if (autoPlaySpeechEnabled.value) {
               const msgs = getSessionMsgs(sid)
-              let assistantMsg = msgs[msgs.length - 1]
-
-              if (assistantMsg?.role === 'assistant' && assistantMsg.isStreaming) {
-                // 追加到 reasoning 字段（保留旧字段兼容）
-                assistantMsg.reasoning = (assistantMsg.reasoning || '') + text
-                noteReasoningStart(assistantMsg.id)
-                // 同时更新或创建 thinking phase
-                if (!assistantMsg.phases) assistantMsg.phases = []
-                const phases = assistantMsg.phases
-                const lastPhase = phases[phases.length - 1]
-                if (lastPhase && lastPhase.type === 'thinking' && lastPhase.isStreaming) {
-                  lastPhase.content += text
-                } else {
-                  // 创建新的 thinking phase
-                  phases.push({
-                    id: uid(),
-                    type: 'thinking',
-                    content: text,
-                    isStreaming: true,
-                    timestamp: Date.now(),
-                  })
-                }
-              } else {
-                const newId = uid()
-                const thinkingPhase: Phase = {
-                  id: uid(),
-                  type: 'thinking',
-                  content: text,
-                  isStreaming: true,
-                  timestamp: Date.now(),
-                }
-                addMessage(sid, {
-                  id: newId,
-                  role: 'assistant',
-                  content: '',
-                  timestamp: Date.now(),
-                  isStreaming: true,
-                  reasoning: text,
-                  phases: [thinkingPhase],
-                })
-                noteReasoningStart(newId)
+              const lastAssistant = [...msgs].reverse().find(m => m.role === 'assistant')
+              if (lastAssistant?.content) {
+                setTimeout(() => {
+                  playMessageSpeech(lastAssistant.id, lastAssistant.content)
+                }, 300)
               }
-
-              break
             }
-
-            case 'reasoning.available': {
-              // Upstream run_agent.py fires reasoning.available with
-              // `assistant_message.content[:500]` as the preview — i.e.,
-              // the main answer, not real reasoning. Ignore the payload
-              // and only use this event as a "thinking ended" signal so
-              // the duration counter stops.
-              const msgs = getSessionMsgs(sid)
-              const last = msgs[msgs.length - 1]
-              if (last?.role === 'assistant' && last.isStreaming) {
-                // 只有当 reasoning.delta 事件曾经启动过计时，才标记结束；
-                // 否则（上游未转发 delta，只发这一次 available）不显示时长。
-                noteReasoningEnd(last.id)
-                // 标记最后一个 thinking phase 为已结束
-                if (last.phases && last.phases.length > 0) {
-                  const lastPhase = last.phases[last.phases.length - 1]
-                  if (lastPhase.type === 'thinking' && lastPhase.isStreaming) {
-                    lastPhase.isStreaming = false
-                  }
-                }
-              }
-
-              break
-            }
-
-            case 'message.delta': {
-              if (evt.delta) runProducedAssistantText = true
-              const msgs = getSessionMsgs(sid)
-              const last = msgs[msgs.length - 1]
-              if (last?.role === 'assistant' && last.isStreaming) {
-                const prev = last.content
-                const next = prev + (evt.delta || '')
-                noteThinkingDelta(last.id, prev, next)
-                // 若之前有 reasoning 累积，则 content 到达即视为推理结束。
-                if (last.reasoning) noteReasoningEnd(last.id)
-                last.content = next
-                // 更新或创建 final phase
-                if (!last.phases) last.phases = []
-                const phases = last.phases
-                const lastPhase = phases[phases.length - 1]
-                if (lastPhase && lastPhase.type === 'final' && lastPhase.isStreaming) {
-                  lastPhase.content += (evt.delta || '')
-                } else {
-                  phases.push({
-                    id: uid(),
-                    type: 'final',
-                    content: evt.delta || '',
-                    isStreaming: true,
-                    timestamp: Date.now(),
-                  })
-                }
-              } else {
-                const newId = uid()
-                const nextContent = evt.delta || ''
-                noteThinkingDelta(newId, '', nextContent)
-                const finalPhase: Phase = {
-                  id: uid(),
-                  type: 'final',
-                  content: nextContent,
-                  isStreaming: true,
-                  timestamp: Date.now(),
-                }
-                addMessage(sid, {
-                  id: newId,
-                  role: 'assistant',
-                  content: nextContent,
-                  timestamp: Date.now(),
-                  isStreaming: true,
-                  phases: [finalPhase],
-                })
-              }
-
-              break
-            }
-
-            case 'tool.started': {
-              runHadToolActivity = true
-              const msgs = getSessionMsgs(sid)
-              let assistantMsg = [...msgs].reverse().find(m => m.role === 'assistant' && m.isStreaming)
-              if (!assistantMsg) {
-                const newId = uid()
-                assistantMsg = {
-                  id: newId,
-                  role: 'assistant',
-                  content: '',
-                  timestamp: Date.now(),
-                  isStreaming: true,
-                  phases: [],
-                }
-                addMessage(sid, assistantMsg)
-              }
-              if (!assistantMsg.phases) assistantMsg.phases = []
-              assistantMsg.phases.push({
-                id: (evt as any).tool_call_id || uid(),
-                type: 'tool_call',
-                content: '',
-                toolName: (evt as any).tool || (evt as any).name || 'tool',
-                toolArgs: (evt as any).args || (evt as any).arguments,
-                toolPreview: (evt as any).preview || undefined,
-                toolStatus: 'running',
-                isStreaming: true,
-                timestamp: Date.now(),
-              })
-              break
-            }
-
-            case 'tool.completed': {
-              runHadToolActivity = true
-              const msgs = getSessionMsgs(sid)
-              const assistantMsg = [...msgs].reverse().find(m => m.role === 'assistant' && m.phases?.length)
-              const phases = assistantMsg?.phases || []
-              const phase = [...phases].reverse().find(p => p.type === 'tool_call' && p.toolStatus === 'running')
-              if (phase) {
-                const output = (evt as any).output
-                const result = output == null ? undefined : (typeof output === 'string' ? output : JSON.stringify(output))
-                const hasError = (evt as any).error === true
-                phase.toolStatus = hasError ? 'error' : 'done'
-                phase.isStreaming = false
-                phase.toolResult = result
-                phase.content = result || ''
-                phase.toolPreview = (evt as any).preview || phase.toolPreview
-                phase.toolDuration = (evt as any).duration || phase.toolDuration
-              }
-              break
-            }
-
-            case 'run.completed': {
-              const msgs = getSessionMsgs(sid)
-              const lastMsg = msgs[msgs.length - 1]
-              if (lastMsg?.isStreaming) {
-                updateMessage(sid, lastMsg.id, { isStreaming: false })
-                // 关闭所有 streaming 的 phase
-                if (lastMsg.phases) {
-                  for (const phase of lastMsg.phases) {
-                    if (phase.isStreaming) phase.isStreaming = false
-                  }
-                }
-              }
-              // Server-computed usage (local countTokens, snapshot-aware)
-              if ((evt as any).inputTokens != null) {
-                const target = sessions.value.find(s => s.id === sid)
-                if (target) {
-                  target.inputTokens = (evt as any).inputTokens
-                  target.outputTokens = (evt as any).outputTokens
-                }
-              }
-              // Belt-and-suspenders: some providers may deliver the final
-              // assistant text only via run.completed.output (no message.delta
-              // stream). If we never produced assistant text but the gateway
-              // reports a non-empty output, fall back to rendering it as a
-              // single assistant message so the user actually sees the reply.
-
-              // Check if backend provided parsed content (from stringified array format)
-              let finalOutputTrimmed = ''
-              if ((evt as any).parsed_content !== undefined) {
-                // Backend has parsed stringified array format, update last assistant message
-                const msgs = getSessionMsgs(sid)
-                const lastAssistant = [...msgs].reverse().find(m => m.role === 'assistant')
-                if (lastAssistant) {
-                  updateMessage(sid, lastAssistant.id, {
-                    content: (evt as any).parsed_content || '',
-                  })
-                  if ((evt as any).parsed_reasoning) {
-                    updateMessage(sid, lastAssistant.id, {
-                      reasoning: (evt as any).parsed_reasoning,
-                    })
-                  }
-                  finalOutputTrimmed = ((evt as any).parsed_content || '').trim()
-                }
-              } else {
-                // Fallback to output field (legacy behavior)
-                const finalOutput =
-                  typeof evt.output === 'string' ? evt.output : ''
-                finalOutputTrimmed = finalOutput.trim()
-                if (!runProducedAssistantText && finalOutputTrimmed !== '') {
-                  addMessage(sid, {
-                    id: uid(),
-                    role: 'assistant',
-                    content: finalOutput,
-                    timestamp: Date.now(),
-                  })
-                  runProducedAssistantText = true
-                }
-              }
-              // Workaround for upstream hermes-agent bug: when the agent
-              // layer silently swallows an error (e.g. invalid API key,
-              // unsupported model), the gateway still emits run.completed
-              // with an empty output. Without surfacing it here the chat UI
-              // looks frozen / "succeeded with no reply". Detect by the
-              // combination of: no assistant text AND no tool activity AND
-              // empty final output. Usage being zero is a *supporting*
-              // signal but not required, since some providers/local models
-              // legitimately omit usage.
-              const swallowedError =
-                !runProducedAssistantText &&
-                !runHadToolActivity &&
-                finalOutputTrimmed === ''
-              if (swallowedError) {
-                addMessage(sid, {
-                  id: uid(),
-                  role: 'system',
-                  content: 'Error: Agent returned no output. The model call may have failed (e.g. invalid API key, model not supported by provider, or context exceeded). Check the hermes-agent logs for details.',
-                  timestamp: Date.now(),
-                })
-              }
-
-              // 自动播放语音
-              console.log('[run.completed] autoPlaySpeechEnabled:', autoPlaySpeechEnabled.value)
-              if (autoPlaySpeechEnabled.value) {
-                const msgs = getSessionMsgs(sid)
-                const lastAssistant = [...msgs].reverse().find(m => m.role === 'assistant')
-                if (lastAssistant?.content) {
-                  // 延迟一小会儿再播放，确保 UI 更新完成
-                  setTimeout(() => {
-                    playMessageSpeech(lastAssistant.id, lastAssistant.content)
-                  }, 300)
-                }
-              }
-
-              cleanup()
-              updateSessionTitle(sid)
-              // the in-flight marker. If the browser is reloading right now
-              // and kills us between the two localStorage writes, we want
-              // the next page load to still see in-flight === true (so
-              // polling kicks in and recovers) rather than the other way
-              // around (cleared in-flight + stale streaming cache = UI stuck).
-
-              clearInFlight(sid)
-              break
-            }
-
-            case 'run.failed': {
-              const msgs = getSessionMsgs(sid)
-              const lastErr = msgs[msgs.length - 1]
-              if (lastErr?.isStreaming) {
-                updateMessage(sid, lastErr.id, {
-                  isStreaming: false,
-                  content: evt.error ? `Error: ${evt.error}` : 'Run failed',
-                  role: 'system',
-                })
-                // 关闭所有 streaming 的 phase
-                if (lastErr.phases) {
-                  for (const phase of lastErr.phases) {
-                    if (phase.isStreaming) phase.isStreaming = false
-                  }
-                }
-              } else {
-                addMessage(sid, {
-                  id: uid(),
-                  role: 'system',
-                  content: evt.error ? `Error: ${evt.error}` : 'Run failed',
-                  timestamp: Date.now(),
-                })
-              }
-              // 标记所有 running 的 tool phases 为 error
-              for (const m of msgs) {
-                if (m.role === 'assistant' && m.phases) {
-                  for (const p of m.phases) {
-                    if (p.type === 'tool_call' && p.toolStatus === 'running') {
-                      p.toolStatus = 'error'
-                      p.isStreaming = false
-                    }
-                  }
-                }
-              }
-              cleanup()
-
-              clearInFlight(sid)
-              break
-            }
-
-            case 'usage.updated': {
-              const target = sessions.value.find(s => s.id === sid)
-              if (target) {
-                target.inputTokens = (evt as any).inputTokens
-                target.outputTokens = (evt as any).outputTokens
-              }
-              break
-            }
+            cleanup()
+            updateSessionTitle(sid)
+            clearInFlight(sid)
+          } else if (result === 'failed') {
+            cleanup()
+            clearInFlight(sid)
           }
         },
         // onDone
@@ -1282,8 +1227,7 @@ export const useChatStore = defineStore('chat', () => {
     if (!readInFlight(sid)) return
 
     let closed = false
-    let runProducedAssistantText = false
-    let runHadToolActivity = false
+    const runFlags = { producedText: false, hadToolActivity: false }
 
     const cleanup = () => {
       if (closed) return
@@ -1294,305 +1238,19 @@ export const useChatStore = defineStore('chat', () => {
       unregisterSessionHandlers(sid)
     }
 
-    // Shared event handler — filters by session_id tag
+    // Shared event handler — filters by session_id tag, delegates to processRunEvent
     function handleEvent(evt: RunEvent) {
       if (closed) return
       // Filter events for this session (server tags all events with session_id)
       if (evt.session_id && evt.session_id !== sid) return
-      switch (evt.event) {
-        case 'run.started':
-          break
-
-        case 'compression.started': {
-          setCompressionState({
-            compressing: true,
-            messageCount: (evt as any).message_count || 0,
-            beforeTokens: (evt as any).token_count || 0,
-            afterTokens: 0,
-            compressed: null,
-          })
-          break
-        }
-
-        case 'compression.completed': {
-          setCompressionState({
-            compressing: false,
-            messageCount: (evt as any).totalMessages || 0,
-            beforeTokens: (evt as any).beforeTokens || 0,
-            afterTokens: (evt as any).afterTokens || 0,
-            compressed: (evt as any).compressed ?? false,
-            error: (evt as any).error,
-          })
-          setTimeout(() => {
-            if (compressionState.value && !compressionState.value.compressing) {
-              setCompressionState(null)
-            }
-          }, 5000)
-          break
-        }
-
-        case 'reasoning.delta':
-        case 'thinking.delta': {
-          const text = evt.text || evt.delta || ''
-          if (!text) break
-          runProducedAssistantText = true
-          const msgs = getSessionMsgs(sid)
-          let assistantMsg = msgs[msgs.length - 1]
-          if (assistantMsg?.role === 'assistant' && assistantMsg.isStreaming) {
-            assistantMsg.reasoning = (assistantMsg.reasoning || '') + text
-            noteReasoningStart(assistantMsg.id)
-            if (!assistantMsg.phases) assistantMsg.phases = []
-            const phases = assistantMsg.phases
-            const lastPhase = phases[phases.length - 1]
-            if (lastPhase && lastPhase.type === 'thinking' && lastPhase.isStreaming) {
-              lastPhase.content += text
-            } else {
-              phases.push({
-                id: uid(),
-                type: 'thinking',
-                content: text,
-                isStreaming: true,
-                timestamp: Date.now(),
-              })
-            }
-          } else {
-            const newId = uid()
-            const thinkingPhase: Phase = {
-              id: uid(),
-              type: 'thinking',
-              content: text,
-              isStreaming: true,
-              timestamp: Date.now(),
-            }
-            addMessage(sid, {
-              id: newId,
-              role: 'assistant',
-              content: '',
-              timestamp: Date.now(),
-              isStreaming: true,
-              reasoning: text,
-              phases: [thinkingPhase],
-            })
-            noteReasoningStart(newId)
-          }
-
-          break
-        }
-
-        case 'reasoning.available': {
-          const msgs = getSessionMsgs(sid)
-          const last = msgs[msgs.length - 1]
-          if (last?.role === 'assistant' && last.isStreaming) {
-            noteReasoningEnd(last.id)
-          }
-
-          break
-        }
-
-        case 'message.delta': {
-          if (evt.delta) runProducedAssistantText = true
-          const msgs = getSessionMsgs(sid)
-          const last = msgs[msgs.length - 1]
-          if (last?.role === 'assistant' && last.isStreaming) {
-            const prev = last.content
-            const next = prev + (evt.delta || '')
-            noteThinkingDelta(last.id, prev, next)
-            if (last.reasoning) noteReasoningEnd(last.id)
-            last.content = next
-            if (!last.phases) last.phases = []
-            const phases = last.phases
-            const lastPhase = phases[phases.length - 1]
-            if (lastPhase && lastPhase.type === 'final' && lastPhase.isStreaming) {
-              lastPhase.content += (evt.delta || '')
-            } else {
-              phases.push({
-                id: uid(),
-                type: 'final',
-                content: evt.delta || '',
-                isStreaming: true,
-                timestamp: Date.now(),
-              })
-            }
-          } else {
-            const newId = uid()
-            const nextContent = evt.delta || ''
-            noteThinkingDelta(newId, '', nextContent)
-            const finalPhase: Phase = {
-              id: uid(),
-              type: 'final',
-              content: nextContent,
-              isStreaming: true,
-              timestamp: Date.now(),
-            }
-            addMessage(sid, {
-              id: newId,
-              role: 'assistant',
-              content: nextContent,
-              timestamp: Date.now(),
-              isStreaming: true,
-              phases: [finalPhase],
-            })
-          }
-
-          break
-        }
-
-        case 'tool.started': {
-          runHadToolActivity = true
-          const msgs = getSessionMsgs(sid)
-          let assistantMsg = [...msgs].reverse().find(m => m.role === 'assistant' && m.isStreaming)
-          if (!assistantMsg) {
-            const newId = uid()
-            assistantMsg = {
-              id: newId,
-              role: 'assistant',
-              content: '',
-              timestamp: Date.now(),
-              isStreaming: true,
-              phases: [],
-            }
-            addMessage(sid, assistantMsg)
-          }
-          if (!assistantMsg.phases) assistantMsg.phases = []
-          assistantMsg.phases.push({
-            id: (evt as any).tool_call_id || uid(),
-            type: 'tool_call',
-            content: '',
-            toolName: (evt as any).tool || (evt as any).name || 'tool',
-            toolArgs: (evt as any).args || (evt as any).arguments,
-            toolPreview: (evt as any).preview || undefined,
-            toolStatus: 'running',
-            isStreaming: true,
-            timestamp: Date.now(),
-          })
-
-          break
-        }
-
-        case 'tool.completed': {
-          runHadToolActivity = true
-          const msgs = getSessionMsgs(sid)
-          const assistantMsg = [...msgs].reverse().find(m => m.role === 'assistant' && m.phases?.length)
-          const phases = assistantMsg?.phases || []
-          const phase = [...phases].reverse().find(p => p.type === 'tool_call' && p.toolStatus === 'running')
-          if (phase) {
-            const output = (evt as any).output
-            const result = output == null ? undefined : (typeof output === 'string' ? output : JSON.stringify(output))
-            const hasError = (evt as any).error === true
-            phase.toolStatus = hasError ? 'error' : 'done'
-            phase.isStreaming = false
-            phase.toolResult = result
-            phase.content = result || ''
-            phase.toolPreview = (evt as any).preview || phase.toolPreview
-            phase.toolDuration = (evt as any).duration || phase.toolDuration
-          }
-
-          break
-        }
-
-        case 'run.completed': {
-          const msgs = getSessionMsgs(sid)
-          const lastMsg = msgs[msgs.length - 1]
-          if (lastMsg?.isStreaming) {
-            updateMessage(sid, lastMsg.id, { isStreaming: false })
-            if (lastMsg.phases) {
-              for (const phase of lastMsg.phases) {
-                if (phase.isStreaming) phase.isStreaming = false
-              }
-            }
-          }
-          // Server-computed usage (local countTokens, snapshot-aware)
-          if ((evt as any).inputTokens != null) {
-            const target = sessions.value.find(s => s.id === sid)
-            if (target) {
-              target.inputTokens = (evt as any).inputTokens
-              target.outputTokens = (evt as any).outputTokens
-            }
-          }
-          // Check if backend provided parsed content (from stringified array format)
-          let finalOutputTrimmed = ''
-          if ((evt as any).parsed_content !== undefined) {
-            // Backend has parsed stringified array format, update last assistant message
-            const msgs = getSessionMsgs(sid)
-            const lastAssistant = [...msgs].reverse().find(m => m.role === 'assistant')
-            if (lastAssistant) {
-              updateMessage(sid, lastAssistant.id, {
-                content: (evt as any).parsed_content || '',
-              })
-              if ((evt as any).parsed_reasoning) {
-                updateMessage(sid, lastAssistant.id, {
-                  reasoning: (evt as any).parsed_reasoning,
-                })
-              }
-              finalOutputTrimmed = ((evt as any).parsed_content || '').trim()
-            }
-          } else {
-            // Fallback to output field (legacy behavior)
-            const finalOutput = typeof evt.output === 'string' ? evt.output : ''
-            finalOutputTrimmed = finalOutput.trim()
-            if (!runProducedAssistantText && finalOutputTrimmed !== '') {
-              addMessage(sid, {
-                id: uid(),
-                role: 'assistant',
-                content: finalOutput,
-                timestamp: Date.now(),
-              })
-            }
-          }
-          const swallowedError = !runProducedAssistantText && !runHadToolActivity && finalOutputTrimmed === ''
-          if (swallowedError) {
-            addMessage(sid, {
-              id: uid(),
-              role: 'system',
-              content: 'Error: Agent returned no output. The model call may have failed (e.g. invalid API key, model not supported by provider, or context exceeded). Check the hermes-agent logs for details.',
-              timestamp: Date.now(),
-            })
-          }
-
-
-          cleanup()
-          updateSessionTitle(sid)
-
-          clearInFlight(sid)
-          break
-        }
-
-        case 'run.failed': {
-          const msgs = getSessionMsgs(sid)
-          const lastErr = msgs[msgs.length - 1]
-          if (lastErr?.isStreaming) {
-            updateMessage(sid, lastErr.id, {
-              isStreaming: false,
-              content: evt.error ? `Error: ${evt.error}` : 'Run failed',
-              role: 'system',
-            })
-          } else {
-            addMessage(sid, {
-              id: uid(),
-              role: 'system',
-              content: evt.error ? `Error: ${evt.error}` : 'Run failed',
-              timestamp: Date.now(),
-            })
-          }
-          msgs.forEach((m, i) => {
-            if (m.role === 'tool' && m.toolStatus === 'running') {
-              msgs[i] = { ...m, toolStatus: 'error' }
-            }
-          })
-          cleanup()
-
-          clearInFlight(sid)
-          break
-        }
-
-        case 'usage.updated': {
-          const target = sessions.value.find(s => s.id === sid)
-          if (target) {
-            target.inputTokens = (evt as any).inputTokens
-            target.outputTokens = (evt as any).outputTokens
-          }
-          break
-        }
+      const result = processRunEvent(sid, evt, runFlags)
+      if (result === 'completed') {
+        cleanup()
+        updateSessionTitle(sid)
+        clearInFlight(sid)
+      } else if (result === 'failed') {
+        cleanup()
+        clearInFlight(sid)
       }
     }
 

@@ -22,18 +22,6 @@ const sending = ref(false)
 // 自动播放语音开关
 const autoPlaySpeech = ref(false)
 
-// 从 store 或 localStorage 读取设置
-onMounted(() => {
-  // 优先使用 store 已有值
-  autoPlaySpeech.value = chatStore.autoPlaySpeechEnabled
-  // localStorage 可以覆盖
-  const saved = localStorage.getItem('autoPlaySpeech')
-  if (saved !== null) {
-    autoPlaySpeech.value = saved === 'true'
-  }
-  // 同步到 chat store
-  chatStore.setAutoPlaySpeech(autoPlaySpeech.value)
-})
 
 // 监听变化并保存
 watch(autoPlaySpeech, (value) => {
@@ -58,7 +46,15 @@ async function loadContextLength() {
   }
 }
 
-onMounted(loadContextLength)
+onMounted(() => {
+  autoPlaySpeech.value = chatStore.autoPlaySpeechEnabled
+  const saved = localStorage.getItem('autoPlaySpeech')
+  if (saved !== null) {
+    autoPlaySpeech.value = saved === 'true'
+  }
+  chatStore.setAutoPlaySpeech(autoPlaySpeech.value)
+  loadContextLength()
+})
 watch(() => useProfilesStore().activeProfileName, loadContextLength)
 watch(() => useAppStore().selectedModel, loadContextLength)
 
