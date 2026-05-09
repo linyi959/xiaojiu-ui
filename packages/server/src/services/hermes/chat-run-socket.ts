@@ -424,10 +424,8 @@ export class ChatRunSocket {
     const upstream = this.gatewayManager.getUpstream(profile).replace(/\/$/, '')
     const apiKey = this.gatewayManager.getApiKey(profile) || undefined
 
-    // Generate ephemeral session ID for Hermes (fresh session per run)
-    const hermesSessionId = session_id
-      ? `eph_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
-      : undefined
+    // Use the frontend's session_id as Hermes session ID (stable across refreshes)
+    const hermesSessionId = session_id || undefined
 
     const now = Math.floor(Date.now() / 1000)
     // Mark working immediately on run start, and append user message
@@ -934,13 +932,33 @@ export class ChatRunSocket {
                     tool_name: parsed.tool || parsed.name || null,
                     timestamp: Math.floor(Date.now() / 1000),
                   })
+                  // Emit to client so it can build tool_call phases in real time
+                  emit('tool.started', {
+                    event: 'tool.started',
+                    tool_call_id: parsed.tool_call_id || null,
+                    name: parsed.name || null,
+                    tool: parsed.tool || null,
+                    preview: parsed.preview || null,
+                  })
                   break
                 }
                 case 'tool.completed': {
                   const toolMsg = [...msgs].reverse().find(m => m.role === 'tool' && !m.content)
-                  if (toolMsg && parsed.output) {
-                    toolMsg.content = typeof parsed.output === 'string' ? parsed.output : JSON.stringify(parsed.output)
+                  let output = ''
+                  if (parsed.output) {
+                    output = typeof parsed.output === 'string' ? parsed.output : JSON.stringify(parsed.output)
                   }
+                  if (toolMsg && output) {
+                    toolMsg.content = output
+                  }
+                  emit('tool.completed', {
+                    event: 'tool.completed',
+                    tool_call_id: parsed.tool_call_id || toolMsg?.tool_call_id || null,
+                    output,
+                    preview: parsed.preview || output.slice(0, 200),
+                    duration: parsed.duration || null,
+                    error: parsed.error === true,
+                  })
                   break
                 }
                 case 'run.completed': {
@@ -1030,11 +1048,13 @@ export class ChatRunSocket {
 
                   // Attach the last assistant message's parsed content to fix stringified array format
                   const lastAssistantMsg = msgs.filter((m: any) => m.role === 'assistant').pop()
-                  if (lastAssistantMsg && parsedCount > 0) {
+                  if (lastAssistantMsg) {
                     parsed.parsed_content = lastAssistantMsg.content || ''
                     parsed.parsed_tool_calls = lastAssistantMsg.tool_calls || null
                     parsed.parsed_reasoning = lastAssistantMsg.reasoning || null
-                    logger.info('[chat-run-socket] attached parsed content to run.completed event for message %s', lastAssistantMsg.id)
+                    parsed.reasoning = lastAssistantMsg.reasoning || null
+                    logger.info('[chat-run-socket] attached parsed content to run.completed event for message %s, reasoning length: %d',
+                      lastAssistantMsg.id, (lastAssistantMsg.reasoning || '').length)
                   }
 
                   break

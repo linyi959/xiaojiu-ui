@@ -26,38 +26,19 @@ function formatTokens(n: number): string {
   return String(n)
 }
 
-function formatToolDuration(seconds: number): string {
-  if (seconds < 1) return `${Math.round(seconds * 1000)}ms`
-  if (seconds < 60) return `${Math.round(seconds * 10) / 10}s`
-  const mins = Math.floor(seconds / 60)
-  const secs = Math.round(seconds % 60)
-  return `${mins}m ${secs}s`
-}
-
 const displayMessages = computed(() =>
   (activeSession.value?.messages || []).filter((m) => {
-    // Filter out tool messages without name (internal use only)
-    if (m.role === 'tool' && !m.toolName) return false
-    // Filter out messages with empty content (except tool messages)
-    if (m.role !== 'tool' && !m.content?.trim()) return false
-    return true
+    if (m.role === 'tool') return !!m.toolName;
+    if (!m.content?.trim() && !m.reasoning?.trim() && !m.phases?.length) return false;
+    return true;
   }),
 );
 
-const currentToolCalls = computed(() => {
-  const msgs = activeSession.value?.messages || [];
-  // Find the last user message index
-  let lastUserIdx = -1;
-  for (let i = msgs.length - 1; i >= 0; i--) {
-    if (msgs[i].role === "user") {
-      lastUserIdx = i;
-      break;
-    }
-  }
-  // Only tool calls after the last user message, newest on top
-  const tools = msgs.filter((m, i) => m.role === "tool" && i > lastUserIdx);
-  return [...tools].reverse();
-});
+const shouldShowFallbackThinkingVideo = computed(() =>
+  chatStore.isRunActive && !(activeSession.value?.messages || []).some(
+    (m) => m.role === 'assistant' && m.isStreaming && (m.content?.trim() || m.reasoning?.trim() || m.phases?.length),
+  ),
+);
 
 function isNearBottom(threshold = 200): boolean {
   const el = listRef.value;
@@ -145,8 +126,9 @@ watch(
       :highlight="chatStore.focusMessageId === msg.id"
     />
     <Transition name="fade">
-      <div v-if="chatStore.isRunActive" class="streaming-indicator">
+      <div v-if="shouldShowFallbackThinkingVideo || chatStore.compressionState" class="streaming-indicator">
         <video
+          v-if="shouldShowFallbackThinkingVideo"
           :src="isDark ? thinkingVideoDark : thinkingVideoLight"
           autoplay
           loop
@@ -154,7 +136,7 @@ watch(
           playsinline
           class="thinking-video"
         />
-        <div v-if="currentToolCalls.length > 0 || chatStore.compressionState" class="tool-calls-panel">
+        <div v-if="chatStore.compressionState" class="tool-calls-panel">
           <!-- Compression indicator -->
           <div v-if="chatStore.compressionState" class="tool-call-item compression-item">
             <svg
@@ -194,76 +176,6 @@ watch(
               v-if="chatStore.compressionState.compressing"
               class="tool-call-spinner"
             ></span>
-          </div>
-          <!-- Tool calls -->
-          <div
-            v-for="tc in currentToolCalls"
-            :key="tc.id"
-            class="tool-call-item"
-          >
-            <svg
-              width="12"
-              height="12"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.5"
-              class="tool-call-icon"
-            >
-              <path
-                d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"
-              />
-            </svg>
-            <span class="tool-call-name">{{ tc.toolName }}</span>
-            <span v-if="tc.toolPreview" class="tool-call-preview">{{
-              tc.toolPreview
-            }}</span>
-            <span
-              v-if="tc.toolDuration && tc.toolStatus !== 'running'"
-              class="tool-call-duration"
-              :title="$t('chat.executionDuration')"
-            >{{ formatToolDuration(tc.toolDuration) }}</span
-            >
-            <svg
-              v-if="tc.toolStatus === 'done'"
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              class="tool-call-success-icon"
-            >
-              <circle cx="12" cy="12" r="10" fill="currentColor" fill-opacity="0.15"/>
-              <path
-                d="M8 12L11 15L16 9"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                fill="none"
-              />
-            </svg>
-            <span
-              v-if="tc.toolStatus === 'running'"
-              class="tool-call-spinner"
-            ></span>
-            <svg
-              v-if="tc.toolStatus === 'error'"
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              class="tool-call-error-icon"
-            >
-              <circle cx="12" cy="12" r="10" fill="currentColor" fill-opacity="0.15"/>
-              <path
-                d="M15 9L9 15M9 9L15 15"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                fill="none"
-              />
-            </svg>
           </div>
         </div>
       </div>
@@ -391,32 +303,6 @@ watch(
   border-radius: 50%;
   animation: spin 0.6s linear infinite;
   flex-shrink: 0;
-}
-
-.tool-call-error-icon {
-  color: #ff4d4f;
-  flex-shrink: 0;
-  margin-left: 6px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.tool-call-duration {
-  font-size: 10px;
-  color: $text-muted;
-  font-family: $font-code;
-  margin-left: 4px;
-  flex-shrink: 0;
-}
-
-.tool-call-success-icon {
-  color: #52c41a;
-  flex-shrink: 0;
-  margin-left: 6px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
 }
 
 @keyframes spin {

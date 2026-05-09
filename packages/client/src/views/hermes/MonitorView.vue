@@ -19,6 +19,7 @@ const health = ref<HealthResponse | null>(null)
 const platforms = ref<AppConfig['platforms']>({})
 const skills = ref<{ categories: SkillCategory[], archived: SkillInfo[] }>({ categories: [], archived: [] })
 const memory = ref<MemoryData | null>(null)
+const memoryLoadFailed = ref(false)
 const lastUpdated = ref('—')
 const loadError = ref('')
 const currentTime = ref(new Date())
@@ -226,12 +227,12 @@ function jobStatus(job: any) {
 
 function jobNextRun(job: any): string {
   if (!job.next_run_at) return '—'
-  return new Date(job.next_run_at * 1000).toLocaleString('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+  return new Date(job.next_run_at).toLocaleString('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
 
 function jobLastRun(job: any): string {
   if (!job.last_run_at) return '从未'
-  return new Date(job.last_run_at * 1000).toLocaleString('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+  return new Date(job.last_run_at).toLocaleString('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
 
 // ── Resource panel tabs ────────────────────────────────────────────────────
@@ -274,9 +275,12 @@ const sparkDays = computed(() => {
 // Skills data
 const skillStats = computed(() => {
   const cats = skills.value.categories
-  const totalCalls = cats.reduce((s, c: SkillCategory) => s + c.skills.reduce((ss, sk: SkillInfo) => ss + (sk as any).useCount, 0), 0)
-  const failedCalls = cats.reduce((s, c: SkillCategory) => s + c.skills.length, 0)
-  return { total: totalCalls, failed: failedCalls, success: totalCalls - failedCalls }
+  const totalCalls = cats.reduce((s, c: SkillCategory) => s + c.skills.reduce((ss, sk: SkillInfo) => ss + ((sk as any).useCount ?? 0), 0), 0)
+  const failedCalls = cats.reduce(
+    (s, c: SkillCategory) => s + c.skills.reduce((ss, sk: SkillInfo) => ss + ((sk as any).failedCount ?? (sk as any).errorCount ?? 0), 0),
+    0,
+  )
+  return { total: totalCalls, failed: failedCalls, success: Math.max(totalCalls - failedCalls, 0) }
 })
 
 const topSkills = computed(() => {
@@ -306,12 +310,16 @@ const CHANNEL_META: Record<string, { label: string; icon: string }> = {
 
 const channels = computed(() => {
   return ALL_CHANNELS
-    .filter(name => platforms.value?.[name]?.enabled !== false)
-    .map(name => ({
-      name: CHANNEL_META[name]?.label ?? name,
-      icon: CHANNEL_META[name]?.icon ?? name.slice(0, 2).toUpperCase(),
-      configured: !!(platforms.value?.[name]?.token || platforms.value?.[name]?.enabled),
-    }))
+    .map(name => {
+      const cfg = platforms.value?.[name]
+      const configured = !!(cfg?.token || cfg?.enabled === true)
+      return {
+        name: CHANNEL_META[name]?.label ?? name,
+        icon: CHANNEL_META[name]?.icon ?? name.slice(0, 2).toUpperCase(),
+        configured,
+      }
+    })
+    .filter(channel => channel.configured)
 })
 
 const configuredChannels = computed(() => channels.value.filter(c => c.configured).length)
@@ -332,7 +340,9 @@ const recentEvents = computed(() => {
     evs.push({ time: timeStr.value, type: 'warn', msg: `${failedJobs.value} 个任务存在异常` })
   }
 
-  if (!memory.value) {
+  if (memoryLoadFailed.value) {
+    evs.push({ time: timeStr.value, type: 'warn', msg: '记忆索引读取失败' })
+  } else if (!memory.value) {
     evs.push({ time: timeStr.value, type: 'warn', msg: '记忆索引尚未就绪' })
   }
 
@@ -380,14 +390,28 @@ async function refresh() {
     if (hr.status === 'fulfilled') health.value = hr.value
     if (cf.status === 'fulfilled') platforms.value = cf.value?.platforms ?? {}
     if (sr.status === 'fulfilled') skills.value = sr.value
-    if (mr.status === 'fulfilled') memory.value = mr.value
+    if (mr.status === 'fulfilled') {
+      memory.value = mr.value
+      memoryLoadFailed.value = false
+    } else {
+      memoryLoadFailed.value = true
+    }
     const failed = [hr, cf, sr, mr, jr, ap, cr, ur].filter(r => r.status === 'rejected').length
     if (failed) loadError.value = `${failed} 个数据源暂时不可用`
     lastUpdated.value = new Date().toLocaleTimeString('zh-CN', { hour12: false })
   } finally {
     loading.value = false
-    // Start animations only after data is loaded
-    if (!animStarted.value) startAnimations()
+    // Start entrance animations once; keep topbar counters in sync on later polls.
+    if (!animStarted.value) {
+      startAnimations()
+    } else {
+      animTokens.value = usageStore.totalTokens
+      animSessions.value = usageStore.totalSessions
+      animChan.value = configuredChannels.value
+      animJobs.value = runningJobs.value
+      animJobsPause.value = pausedJobs.value
+      animHealth.value = overallHealth.value
+    }
   }
 }
 
@@ -405,7 +429,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <section class="cc-view">
+  <section class="cc-view monitor-view">
 
     <!-- ═══════════════════════════════════════════════════════════ TOP BAR -->
     <header class="topbar">
@@ -1499,7 +1523,7 @@ $text-dim: #3d5a80;
 // ─── Mid Grid ───────────────────────────────────────────────────────────────
 .mid-grid {
   display: grid;
-  grid-template-columns: 1fr 1.4fr 1fr;
+  grid-template-columns: 1fr 1.6fr 1fr;
   gap: 12px;
   min-height: 0;
 }
@@ -2037,7 +2061,7 @@ $text-dim: #3d5a80;
 .tk-row:hover { background: rgba(0,0,0,0.35) !important; }
 
 // ─── Responsive ──────────────────────────────────────────────────────────────
-@media (max-width: 1200px) {
+@media (max-width: 1500px) {
   .mid-grid {
     grid-template-columns: 1fr 1fr;
   }

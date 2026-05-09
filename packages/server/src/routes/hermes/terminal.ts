@@ -154,7 +154,7 @@ export function setupTerminalWebSocket(httpServer: HttpServer) {
       session.pty.onData((data: string) => {
         if (ws.readyState !== ws.OPEN) return
         if (conn.activeSessionId === session.id) {
-          ws.send(data)
+          ws.send(JSON.stringify({ type: 'output', id: session.id, data }))
         } else {
           // Buffer output for inactive sessions
           let buf = conn.outputBuffers.get(session.id)
@@ -247,7 +247,7 @@ export function setupTerminalWebSocket(httpServer: HttpServer) {
           const buf = conn.outputBuffers.get(sessionId)
           if (buf && buf.length > 0) {
             for (const chunk of buf) {
-              ws.send(chunk)
+              ws.send(JSON.stringify({ type: 'output', id: sessionId, data: chunk }))
             }
             conn.outputBuffers.delete(sessionId)
           }

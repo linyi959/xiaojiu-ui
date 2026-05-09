@@ -14,6 +14,7 @@ const router = createRouter({
       path: '/hermes/home',
       name: 'hermes.home',
       component: () => import('@/views/hermes/MonitorView.vue'),
+      meta: { hidePresenceDock: true },
     },
     {
       path: '/hermes/chat',
@@ -34,6 +35,7 @@ const router = createRouter({
       path: '/hermes/monitor',
       name: 'hermes.monitor',
       component: () => import('@/views/hermes/MonitorView.vue'),
+      meta: { hidePresenceDock: true },
     },
     {
       path: '/hermes/models',

@@ -4,11 +4,14 @@ const listConversationsMock = vi.fn(async (ctx: any) => { ctx.body = { sessions:
 const getConversationMessagesMock = vi.fn(async (ctx: any) => { ctx.body = { session_id: ctx.params.id, messages: [] } })
 const getConversationMessagesPaginatedMock = vi.fn(async (ctx: any) => { ctx.body = { session_id: ctx.params.id, messages: [], pagination: {} } })
 const listMock = vi.fn(async (ctx: any) => { ctx.body = { sessions: [{ id: 's1' }] } })
+const listHermesSessionsMock = vi.fn(async (ctx: any) => { ctx.body = { sessions: [{ id: 'hs1' }] } })
+const getHermesSessionMock = vi.fn(async (ctx: any) => { ctx.body = { session: { id: ctx.params.id } } })
 const searchMock = vi.fn(async (ctx: any) => { ctx.body = { results: [{ id: 'search-1' }] } })
 const getMock = vi.fn(async (ctx: any) => { ctx.body = { session: { id: ctx.params.id } } })
 const removeMock = vi.fn(async (ctx: any) => { ctx.body = { ok: true } })
 const renameMock = vi.fn(async (ctx: any) => { ctx.body = { ok: true } })
 const setWorkspaceMock = vi.fn(async (ctx: any) => { ctx.body = { ok: true } })
+const setModelMock = vi.fn(async (ctx: any) => { ctx.body = { ok: true } })
 const listWorkspaceFoldersMock = vi.fn(async (ctx: any) => { ctx.body = { folders: [] } })
 const usageBatchMock = vi.fn(async (ctx: any) => { ctx.body = {} })
 const usageSingleMock = vi.fn(async (ctx: any) => { ctx.body = { input_tokens: 0, output_tokens: 0 } })
@@ -20,11 +23,14 @@ vi.mock('../../packages/server/src/controllers/hermes/sessions', () => ({
   getConversationMessages: getConversationMessagesMock,
   getConversationMessagesPaginated: getConversationMessagesPaginatedMock,
   list: listMock,
+  listHermesSessions: listHermesSessionsMock,
+  getHermesSession: getHermesSessionMock,
   search: searchMock,
   get: getMock,
   remove: removeMock,
   rename: renameMock,
   setWorkspace: setWorkspaceMock,
+  setModel: setModelMock,
   listWorkspaceFolders: listWorkspaceFoldersMock,
   usageBatch: usageBatchMock,
   usageSingle: usageSingleMock,
@@ -39,10 +45,13 @@ describe('session routes', () => {
     getConversationMessagesMock.mockClear()
     getConversationMessagesPaginatedMock.mockClear()
     listMock.mockClear()
+    listHermesSessionsMock.mockClear()
+    getHermesSessionMock.mockClear()
     searchMock.mockClear()
     getMock.mockClear()
     removeMock.mockClear()
     renameMock.mockClear()
+    setModelMock.mockClear()
   })
 
   it('registers conversations, session list, and search routes', async () => {
@@ -54,6 +63,8 @@ describe('session routes', () => {
       '/api/hermes/sessions/conversations/:id/messages',
       '/api/hermes/sessions/conversations/:id/messages/paginated',
       '/api/hermes/sessions',
+      '/api/hermes/sessions/hermes',
+      '/api/hermes/sessions/hermes/:id',
       '/api/hermes/search/sessions',
       '/api/hermes/sessions/search',
       '/api/hermes/sessions/usage',
@@ -61,6 +72,7 @@ describe('session routes', () => {
       '/api/hermes/sessions/context-length',
       '/api/hermes/sessions/:id',
       '/api/hermes/sessions/:id/usage',
+      '/api/hermes/sessions/:id/model',
       '/api/hermes/sessions/:id/rename',
     ]))
   })

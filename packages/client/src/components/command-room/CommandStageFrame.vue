@@ -1,133 +1,16 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import { useAppStore } from '@/stores/hermes/app'
-import { useChatStore } from '@/stores/hermes/chat'
-import { useCommandPalette } from '@/composables/useCommandPalette'
 
 const route = useRoute()
-const router = useRouter()
 const appStore = useAppStore()
-const chatStore = useChatStore()
-const { open: openPalette } = useCommandPalette()
-
-const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad|iPod/.test(navigator.platform)
-const cmdKey = isMac ? '⌘' : 'Ctrl'
 
 const { connected } = storeToRefs(appStore)
-const { activeSession, isStreaming } = storeToRefs(chatStore)
-
-// 路由名 -> 模块元数据（group / title / subtitle），严格对齐契约五大模块
-const moduleMap: Record<string, { group: string; title: string; subtitle: string; code: string }> = {
-  'hermes.home':      { group: '中枢总览', title: '中枢总览',    subtitle: 'Hermes 实时运行总台',         code: 'HOME-00' },
-  'hermes.chat':      { group: '对话中枢', title: '对话核心',    subtitle: '小九与林燚的主通道',       code: 'CHAT-01' },
-  'hermes.history':   { group: '对话中枢', title: '会话历史',    subtitle: '所有曾经发生过的谈话',     code: 'CHAT-02' },
-  'hermes.groupChat': { group: '对话中枢', title: '群组协作',    subtitle: '多 Agent 协同对话',        code: 'CHAT-03' },
-  'hermes.monitor':   { group: '任务指挥', title: '任务雷达',    subtitle: '实时运行概览',             code: 'MIS-01' },
-  'hermes.jobs':      { group: '任务指挥', title: '自动任务',    subtitle: '调度 / Cron / Webhook',    code: 'MIS-02' },
-  'hermes.usage':     { group: '任务指挥', title: '用量统计',    subtitle: 'Token · 次数 · 趋势',      code: 'MIS-03' },
-  'hermes.logs':      { group: '任务指挥', title: '运行日志',    subtitle: '系统与任务流水',           code: 'MIS-04' },
-  'hermes.memory':    { group: '记忆与知识', title: '记忆系统',  subtitle: '长期 · 短期 · 情绪档案',    code: 'MEM-01' },
-  'hermes.files':     { group: '记忆与知识', title: '文件舱',    subtitle: '文件存取与上传',           code: 'MEM-02' },
-  'hermes.skills':    { group: '能力兵器库', title: '技能库',    subtitle: '已安装 / 可调用能力',      code: 'ARS-01' },
-  'hermes.models':    { group: '能力兵器库', title: '模型核心',  subtitle: '大脑池 · Provider 配置',   code: 'ARS-02' },
-  'hermes.terminal':  { group: '能力兵器库', title: '执行终端',  subtitle: '直接向机器发指令',         code: 'ARS-03' },
-  'hermes.gateways':  { group: '能力兵器库', title: '网关',      subtitle: '对外连通与授权',           code: 'ARS-04' },
-  'hermes.channels':  { group: '能力兵器库', title: '频道',      subtitle: 'Telegram · Discord · etc', code: 'ARS-05' },
-  'hermes.profiles':  { group: '系统驾驶舱', title: '档案',      subtitle: '身份 / 配置切换',          code: 'SYS-01' },
-  'hermes.settings':  { group: '系统驾驶舱', title: '设置',      subtitle: '界面 · 凭证 · 隐私',        code: 'SYS-02' },
-}
-
-const meta = computed(() => {
-  const name = String(route.name || '')
-  return moduleMap[name] || { group: '小九中枢', title: '命令核心', subtitle: '—', code: 'CORE' }
-})
-
-const connectionLabel = computed(() => (connected.value ? 'ONLINE' : 'OFFLINE'))
-const streamLabel = computed(() => (isStreaming.value ? 'STREAMING' : 'IDLE'))
-const sessionLabel = computed(() => {
-  const s = activeSession.value
-  if (!s) return '—'
-  const n = s.messageCount ?? s.messages?.length ?? 0
-  return `${String(s.id).slice(0, 8)} · ${n} msg`
-})
-const modelLabel = computed(() => appStore.selectedModel || '—')
-
-function refreshCurrentPage() {
-  router.go(0)
-}
 </script>
 
 <template>
-  <section class="command-stage-frame" :class="{ 'is-streaming': isStreaming, 'is-offline': !connected }">
-    <header class="stage-topbar">
-      <div class="topbar-left">
-        <div class="crumb">
-          <span class="crumb-group">{{ meta.group }}</span>
-          <span class="crumb-divider">/</span>
-          <span class="crumb-code">{{ meta.code }}</span>
-        </div>
-        <h1 class="stage-title">{{ meta.title }}</h1>
-        <p class="stage-subtitle">{{ meta.subtitle }}</p>
-      </div>
-
-      <div class="topbar-right">
-        <div class="telemetry">
-          <div class="telemetry-item" :class="{ ok: connected, off: !connected }">
-            <span class="dot" />
-            <div class="tcol">
-              <span class="tlabel">连接</span>
-              <strong class="tvalue">{{ connectionLabel }}</strong>
-            </div>
-          </div>
-
-          <div class="telemetry-item" :class="{ streaming: isStreaming }">
-            <span class="dot" />
-            <div class="tcol">
-              <span class="tlabel">链路</span>
-              <strong class="tvalue">{{ streamLabel }}</strong>
-            </div>
-          </div>
-
-          <div class="telemetry-item">
-            <div class="tcol">
-              <span class="tlabel">会话</span>
-              <strong class="tvalue">{{ sessionLabel }}</strong>
-            </div>
-          </div>
-
-          <div class="telemetry-item">
-            <div class="tcol">
-              <span class="tlabel">大脑</span>
-              <strong class="tvalue">{{ modelLabel }}</strong>
-            </div>
-          </div>
-        </div>
-
-        <button
-          type="button"
-          class="session-refresh-trigger"
-          title="刷新当前会话页面"
-          @click="refreshCurrentPage"
-        >
-          <span class="refresh-icon">↻</span>
-          <span class="refresh-text">刷新</span>
-        </button>
-
-        <button
-          type="button"
-          class="cmdk-trigger"
-          :title="`唤出指令面板（${cmdKey}K）`"
-          @click="openPalette()"
-        >
-          <span class="cmdk-icon">/</span>
-          <span class="cmdk-text">指令</span>
-          <span class="cmdk-shortcut"><kbd>{{ cmdKey }}</kbd><kbd>K</kbd></span>
-        </button>
-      </div>
-    </header>
-
+  <section class="command-stage-frame" :class="{ 'is-offline': !connected }">
     <div class="stage-surface command-room-adapter" :class="{ 'is-chat-stage': route.name === 'hermes.chat' }">
       <slot />
     </div>
@@ -160,270 +43,10 @@ function refreshCurrentPage() {
   mask-image: radial-gradient(circle at center, black, transparent 84%);
 }
 
-.stage-topbar,
 .stage-surface {
   position: relative;
   z-index: 1;
-}
-
-.stage-topbar {
-  min-height: 82px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 24px;
-  padding: 14px 24px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(2, 6, 23, 0.58);
-  backdrop-filter: blur(18px);
-}
-
-.topbar-left {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-}
-
-.crumb {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-family: 'Fira Code', monospace;
-  font-size: 10px;
-  letter-spacing: 0.2em;
-}
-
-.crumb-group {
-  color: #63e7ff;
-}
-
-.crumb-divider {
-  color: rgba(99, 231, 255, 0.34);
-}
-
-.crumb-code {
-  color: #7f90aa;
-}
-
-.stage-title {
-  margin: 4px 0 0;
-  color: #f8fafc;
-  font-size: 22px;
-  font-weight: 640;
-  letter-spacing: -0.01em;
-}
-
-.stage-subtitle {
-  margin: 0;
-  color: #8ba0bd;
-  font-size: 12.5px;
-  letter-spacing: 0.02em;
-}
-
-.topbar-right {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.session-refresh-trigger,
-.cmdk-trigger {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 12px 8px 14px;
-  background: linear-gradient(135deg, rgba(99, 231, 255, 0.08), rgba(77, 141, 255, 0.05));
-  border: 1px solid rgba(99, 231, 255, 0.22);
-  border-radius: 12px;
-  color: #cbe5ff;
-  font-size: 12px;
-  letter-spacing: 0.02em;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  font-family: inherit;
-
-  &:hover {
-    background: linear-gradient(135deg, rgba(99, 231, 255, 0.18), rgba(77, 141, 255, 0.12));
-    border-color: rgba(99, 231, 255, 0.42);
-    color: #edf7ff;
-    box-shadow: 0 0 18px rgba(99, 231, 255, 0.22);
-  }
-
-  &:active {
-    transform: translateY(1px);
-  }
-}
-
-.session-refresh-trigger {
-  gap: 8px;
-  padding-inline: 12px;
-
-  .refresh-icon {
-    color: #63e7ff;
-    font-family: 'Fira Code', monospace;
-    font-size: 14px;
-    font-weight: 600;
-    text-shadow: 0 0 8px rgba(99, 231, 255, 0.42);
-  }
-
-  .refresh-text {
-    font-weight: 500;
-  }
-}
-
-.cmdk-trigger {
-  .cmdk-icon {
-    font-family: 'Fira Code', monospace;
-    color: #63e7ff;
-    font-weight: 600;
-    font-size: 14px;
-    text-shadow: 0 0 8px rgba(99, 231, 255, 0.5);
-  }
-
-  .cmdk-text {
-    font-weight: 500;
-  }
-
-  .cmdk-shortcut {
-    display: inline-flex;
-    align-items: center;
-    gap: 3px;
-    padding-left: 8px;
-    border-left: 1px solid rgba(99, 231, 255, 0.16);
-
-    kbd {
-      font-family: 'Fira Code', monospace;
-      font-size: 10px;
-      padding: 1px 5px;
-      border-radius: 3px;
-      border: 1px solid rgba(99, 231, 255, 0.22);
-      background: rgba(2, 6, 16, 0.5);
-      color: #cbe5ff;
-      line-height: 1.4;
-    }
-  }
-}
-
-.telemetry {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.telemetry-item {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 96px;
-  padding: 8px 12px;
-  border: 1px solid rgba(99, 231, 255, 0.14);
-  border-radius: 12px;
-  background:
-    linear-gradient(180deg, rgba(12, 22, 42, 0.78), rgba(4, 9, 20, 0.58));
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
-}
-
-.telemetry-item .dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: rgba(127, 144, 170, 0.6);
-  box-shadow: 0 0 0 0 transparent;
-  transition: background 0.2s ease, box-shadow 0.2s ease;
-}
-
-.telemetry-item.ok .dot {
-  background: #6ee7b7;
-  box-shadow: 0 0 12px rgba(110, 231, 183, 0.8);
-}
-
-.telemetry-item.off .dot {
-  background: #ff6b8a;
-  box-shadow: 0 0 12px rgba(255, 107, 138, 0.7);
-}
-
-.telemetry-item.streaming .dot {
-  background: #63e7ff;
-  box-shadow: 0 0 14px rgba(99, 231, 255, 0.85);
-  animation: dot-pulse 1.2s ease-in-out infinite;
-}
-
-/* streaming 状态下整条遥测条呼吸：边缘色 + 微辉光 */
-.command-stage-frame.is-streaming .telemetry-item {
-  border-color: rgba(99, 231, 255, 0.28);
-  background:
-    linear-gradient(180deg, rgba(18, 30, 56, 0.78), rgba(6, 14, 28, 0.58));
-  animation: telemetry-breathe 3.6s ease-in-out infinite;
-}
-
-.command-stage-frame.is-streaming .stage-topbar {
-  border-bottom-color: rgba(99, 231, 255, 0.28);
-  background:
-    linear-gradient(180deg, rgba(8, 16, 32, 0.7) 0%, rgba(2, 6, 23, 0.4) 100%);
-  animation: topbar-glow 4.2s ease-in-out infinite;
-}
-
-.command-stage-frame.is-offline .stage-topbar {
-  border-bottom-color: rgba(255, 107, 138, 0.22);
-}
-
-.command-stage-frame.is-offline .stage-title {
-  color: #ffd3da;
-}
-
-@keyframes telemetry-breathe {
-  0%, 100% {
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
-  }
-  50% {
-    box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.04),
-      0 0 16px rgba(99, 231, 255, 0.18);
-  }
-}
-
-@keyframes topbar-glow {
-  0%, 100% {
-    box-shadow: 0 0 0 0 transparent;
-  }
-  50% {
-    box-shadow: inset 0 -1px 0 rgba(99, 231, 255, 0.18);
-  }
-}
-
-@keyframes dot-pulse {
-  0%, 100% { transform: scale(0.85); opacity: 0.7; }
-  50% { transform: scale(1.15); opacity: 1; }
-}
-
-.tcol {
-  display: grid;
-  gap: 1px;
-  min-width: 0;
-}
-
-.tlabel {
-  color: #7f90aa;
-  font-family: 'Fira Code', monospace;
-  font-size: 9px;
-  letter-spacing: 0.16em;
-}
-
-.tvalue {
-  color: #edf7ff;
-  font-family: 'Fira Code', monospace;
-  font-size: 11.5px;
-  font-weight: 620;
-  letter-spacing: 0.04em;
-  white-space: nowrap;
-  max-width: 180px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.stage-surface {
-  height: calc(100% - 82px);
+  height: 100%;
   padding: 18px;
   overflow: auto;
 }
@@ -1317,32 +940,13 @@ function refreshCurrentPage() {
   line-height: 1.6;
 }
 
-/* 9. 流式指示器与 tool-calls-panel：和工具卡统一语言 */
+/* 9. 流式兜底指示器：只用于没有 assistant 内部状态时的 loading/video */
 .command-room-adapter :deep(.chat-view .streaming-indicator) {
   margin: 6px 0 14px !important;
   padding: 10px 14px !important;
   border: 1px solid rgba(99, 231, 255, 0.18) !important;
   border-radius: 14px !important;
   background: linear-gradient(180deg, rgba(12, 22, 42, 0.76), rgba(4, 9, 20, 0.52)) !important;
-}
-
-.command-room-adapter :deep(.chat-view .tool-call-item) {
-  border-radius: 10px !important;
-  background: rgba(2, 6, 23, 0.58) !important;
-  border: 1px solid rgba(99, 231, 255, 0.12) !important;
-}
-
-.command-room-adapter :deep(.chat-view .tool-call-name) {
-  color: #63e7ff !important;
-  font-family: 'Fira Code', monospace !important;
-  font-size: 11px !important;
-  letter-spacing: 0.08em;
-}
-
-.command-room-adapter :deep(.chat-view .tool-call-preview) {
-  color: #b9c9de !important;
-  font-family: 'Fira Code', monospace !important;
-  font-size: 11px !important;
 }
 
 .command-room-adapter :deep(.chat-view .streaming-dots) {
@@ -1506,9 +1110,8 @@ function refreshCurrentPage() {
 }
 
 @media (max-width: 1180px) {
-  .stage-title { font-size: 19px; }
-  .stage-subtitle { font-size: 11.5px; }
-  .telemetry-item { min-width: 84px; padding: 6px 10px; }
-  .tvalue { font-size: 11px; max-width: 140px; }
+  .command-room-adapter :deep(.chat-view) {
+    /* responsive adjustments if needed */
+  }
 }
 </style>

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount } from 'vue'
+import { ref, onMounted, onBeforeUnmount, watch } from 'vue'
 import { NButton, NSpace, useMessage, useDialog } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { useFilesStore } from '@/stores/hermes/files'
@@ -22,6 +22,7 @@ const filesStore = useFilesStore()
 
 const editorContainer = ref<HTMLElement | null>(null)
 let editor: monaco.editor.IStandaloneCodeEditor | null = null
+let applyingExternalChange = false
 const saving = ref(false)
 
 onMounted(() => {
@@ -41,6 +42,7 @@ onMounted(() => {
   })
 
   editor.onDidChangeModelContent(() => {
+    if (applyingExternalChange) return
     if (filesStore.editingFile) {
       filesStore.editingFile.content = editor!.getValue()
     }
@@ -51,6 +53,25 @@ onMounted(() => {
     handleSave()
   })
 })
+
+watch(
+  () => filesStore.editingFile && [filesStore.editingFile.path, filesStore.editingFile.content, filesStore.editingFile.language].join('\u0000'),
+  () => {
+    if (!editor || !filesStore.editingFile) return
+    const model = editor.getModel()
+    if (!model) return
+
+    applyingExternalChange = true
+    try {
+      if (model.getValue() !== filesStore.editingFile.content) {
+        editor.setValue(filesStore.editingFile.content)
+      }
+      monaco.editor.setModelLanguage(model, filesStore.editingFile.language)
+    } finally {
+      applyingExternalChange = false
+    }
+  },
+)
 
 onBeforeUnmount(() => {
   editor?.dispose()
@@ -73,8 +94,8 @@ function handleClose() {
   if (filesStore.hasUnsavedChanges) {
     dialogApi.warning({
       title: t('files.unsavedChanges'),
-      positiveText: t('common.ok'),
-      negativeText: t('common.cancel'),
+      positiveText: t('files.discardChanges'),
+      negativeText: t('files.continueEditing'),
       onPositiveClick: () => {
         filesStore.closeEditor()
       },

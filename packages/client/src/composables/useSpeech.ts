@@ -19,7 +19,11 @@ export interface SpeechState {
  * Web Speech API 语音播放 Composable
  */
 export function useSpeech() {
-  const synth = window.speechSynthesis
+  const hasWindow = typeof window !== 'undefined'
+  const synth = hasWindow && 'speechSynthesis' in window ? window.speechSynthesis : null
+  const SpeechUtteranceCtor = hasWindow && 'SpeechSynthesisUtterance' in window
+    ? window.SpeechSynthesisUtterance
+    : null
   const availableVoices = ref<SpeechSynthesisVoice[]>([])
   const state = ref<SpeechState>({
     isPlaying: false,
@@ -33,11 +37,11 @@ export function useSpeech() {
 
   // 加载可用语音列表
   function loadVoices() {
-    availableVoices.value = synth.getVoices()
+    availableVoices.value = synth?.getVoices() ?? []
   }
 
   // 浏览器会在语音列表变化时触发 voiceschanged 事件
-  synth.addEventListener('voiceschanged', loadVoices)
+  synth?.addEventListener('voiceschanged', loadVoices)
   loadVoices() // 初始加载
 
   /**
@@ -74,7 +78,7 @@ export function useSpeech() {
    * 检查浏览器是否支持 Web Speech API
    */
   const isSupported = computed(() => {
-    return 'speechSynthesis' in window && 'SpeechSynthesisUtterance' in window
+    return !!synth && !!SpeechUtteranceCtor
   })
 
   /**
@@ -107,7 +111,7 @@ export function useSpeech() {
    * 停止当前播放
    */
   function stop() {
-    if (synth.speaking) {
+    if (synth?.speaking) {
       synth.cancel()
     }
     if (utterance) {
@@ -161,7 +165,9 @@ export function useSpeech() {
     stop()
 
     // 创建新的 utterance
-    utterance = new SpeechSynthesisUtterance(text)
+    if (!synth || !SpeechUtteranceCtor) return
+
+    utterance = new SpeechUtteranceCtor(text)
     currentText = text
 
     // 设置语音参数
@@ -217,7 +223,7 @@ export function useSpeech() {
    * 暂停播放
    */
   function pause() {
-    if (synth.speaking && !state.value.isPaused) {
+    if (synth?.speaking && !state.value.isPaused) {
       synth.pause()
       state.value.isPaused = true
     }
@@ -227,7 +233,7 @@ export function useSpeech() {
    * 恢复播放
    */
   function resume() {
-    if (state.value.isPaused) {
+    if (synth && state.value.isPaused) {
       synth.resume()
       state.value.isPaused = false
     }
@@ -251,7 +257,7 @@ export function useSpeech() {
   // 清理
   onUnmounted(() => {
     stop()
-    synth.removeEventListener('voiceschanged', loadVoices)
+    synth?.removeEventListener('voiceschanged', loadVoices)
   })
 
   return {

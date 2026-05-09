@@ -54,9 +54,30 @@ export const useProfilesStore = defineStore('profiles', () => {
     const ok = await profilesApi.deleteProfile(name)
     if (ok) {
       delete detailMap.value[name]
+      clearProfileBrowserState(name)
       await fetchProfiles()
     }
     return ok
+  }
+
+  function clearProfileBrowserState(name: string) {
+    const exactKeys = new Set([
+      `hermes_session_pins_v1_${name}`,
+      `hermes_human_only_v1_${name}`,
+      `hermes_active_session_${name}`,
+      `hermes_sessions_cache_v1_${name}`,
+    ])
+    const prefixes = [
+      `hermes_session_msgs_v1_${name}_`,
+      `hermes_in_flight_v1_${name}_`,
+    ]
+    for (let i = localStorage.length - 1; i >= 0; i -= 1) {
+      const key = localStorage.key(i)
+      if (!key) continue
+      if (exactKeys.has(key) || prefixes.some(prefix => key.startsWith(prefix))) {
+        localStorage.removeItem(key)
+      }
+    }
   }
 
   // 清理所有 profile 的会话缓存

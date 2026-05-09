@@ -27,7 +27,11 @@ const APP_VERSION = typeof __APP_VERSION__ !== 'undefined'
   : (() => { try { return JSON.parse(readFileSync(resolve(__dirname, '../../package.json'), 'utf-8')).version } catch { return 'dev' } })()
 
 // Global error handlers
-process.on('uncaughtException', (err) => {
+process.on('uncaughtException', (err: any) => {
+  if (err?.code === 'EPIPE') {
+    logger.warn({ err }, 'Ignored broken pipe (EPIPE)')
+    return
+  }
   logger.fatal(err, 'Uncaught exception')
   process.exit(1)
 })
@@ -75,11 +79,17 @@ export async function bootstrap() {
     logger.info('Auth enabled — token: %s', authToken)
   }
 
-  // SPA fallback
+  // SPA fallback — skip Socket.IO paths so they reach the Socket.IO server
   const distDir = resolve(__dirname, '..', 'client')
-  app.use(serve(distDir))
-  app.use(async (ctx) => {
-    if (!ctx.path.startsWith('/api') &&
+  app.use(async (ctx, next) => {
+    // Skip static file serving for Socket.IO paths — let them through to the Socket.IO server
+    if (ctx.path.startsWith('/socket.io') || ctx.path.startsWith('/chat-run')) {
+      return next()
+    }
+    await next()
+    // SPA fallback: serve index.html for non-API routes
+    if (ctx.status === 404 &&
+      !ctx.path.startsWith('/api') &&
       ctx.path !== '/health' &&
       ctx.path !== '/upload' &&
       ctx.path !== '/webhook') {
@@ -135,6 +145,10 @@ export async function bootstrap() {
   })
 
   server.on('error', (err: any) => {
+    if (err?.code === 'EADDRINUSE') {
+      logger.warn({ err }, 'Server port already in use; skipping duplicate listener bootstrap')
+      return
+    }
     console.error('[bootstrap] server error:', err.code || err.message)
     logger.error({ err }, 'Server error')
   })

@@ -52,6 +52,10 @@ export default defineConfig({
         target: BACKEND,
         ws: true,
       },
+      '/chat-run': {
+        target: BACKEND,
+        ws: true,
+      },
     },
   },
 })

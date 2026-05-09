@@ -792,16 +792,24 @@ export async function getUsageStatsFromDb(
       WHERE started_at > ?${sourceFilter}
       GROUP BY date
       ORDER BY date ASC
-    `).all(since).map(row => ({
-      date: String(row.date || ''),
-      input_tokens: normalizeNumber(row.input_tokens),
-      output_tokens: normalizeNumber(row.output_tokens),
-      cache_read_tokens: normalizeNumber(row.cache_read_tokens),
-      cache_write_tokens: normalizeNumber(row.cache_write_tokens),
-      sessions: normalizeNumber(row.sessions),
-      errors: 0,
-      cost: normalizeNumber(row.cost),
-    }))
+    `).all(since).map(row => {
+      const inputTokens = normalizeNumber(row.input_tokens)
+      const outputTokens = normalizeNumber(row.output_tokens)
+      const cacheReadTokens = normalizeNumber(row.cache_read_tokens)
+      const cacheWriteTokens = normalizeNumber(row.cache_write_tokens)
+      return {
+        date: String(row.date || ''),
+        tokens: inputTokens + outputTokens,
+        cache: cacheReadTokens,
+        input_tokens: inputTokens,
+        output_tokens: outputTokens,
+        cache_read_tokens: cacheReadTokens,
+        cache_write_tokens: cacheWriteTokens,
+        sessions: normalizeNumber(row.sessions),
+        errors: 0,
+        cost: normalizeNumber(row.cost),
+      }
+    })
 
     return {
       input_tokens: normalizeNumber(totals.input_tokens),

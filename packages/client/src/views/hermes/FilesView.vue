@@ -60,7 +60,7 @@ onMounted(() => {
       />
       <FileBreadcrumb />
       <div class="files-content">
-        <FileEditor v-if="filesStore.editingFile" />
+        <FileEditor v-if="filesStore.editingFile" :key="filesStore.editingFile.path" />
         <FilePreview v-else-if="filesStore.previewFile" />
         <FileList v-else @contextmenu-entry="handleContextMenu" />
       </div>

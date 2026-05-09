@@ -204,7 +204,7 @@ describe('native-style Hermes usage analytics DB aggregation', () => {
       { model: 'tool-model', input_tokens: 30, output_tokens: 20, cache_read_tokens: 5, cache_write_tokens: 1, reasoning_tokens: 2, sessions: 1 },
     ])
     expect(result.by_day).toHaveLength(2)
-    expect(result.by_day[0]).toEqual({ date: day(now - 86400), tokens: 10, cache: 1, sessions: 1, cost: 0.005 })
+    expect(result.by_day[0]).toMatchObject({ date: day(now - 86400), tokens: 10, cache: 1, sessions: 1, cost: 0.005 })
     expect(result.by_day[1]).toMatchObject({ date: day(now), tokens: 203, cache: 15, sessions: 3 })
     expect(result.by_day[1].cost).toBeCloseTo(0.038)
   })

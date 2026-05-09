@@ -5,7 +5,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { useAppStore } from './app'
 import { useProfilesStore } from './profiles'
-import { detectThinkingBoundary } from '@/utils/thinking-parser'
+import { detectThinkingBoundary, parseThinking } from '@/utils/thinking-parser'
 
 // Re-export ContentBlock for convenience
 export type ContentBlock = ContentBlockImport
@@ -21,9 +21,8 @@ export interface Attachment {
 
 export interface Phase {
   id: string
-  // 'thinking' | 'tool_call' | 'tool_result' | 'final'
-  type: 'thinking' | 'tool_call' | 'tool_result' | 'final'
-  // 内容：thinking=推理文本，tool_call=工具名，tool_result=返回内容，final=最终回复
+  type: 'thinking' | 'tool_call' | 'final'
+  // 内容：thinking=推理文本，tool_call=工具名，final=最终回复
   content: string
   // 工具调用相关字段
   toolName?: string
@@ -142,7 +141,7 @@ async function buildContentBlocks(
   return blocks
 }
 
-function mapHermesMessages(msgs: HermesMessage[]): Message[] {
+export function mapHermesMessages(msgs: HermesMessage[]): Message[] {
   // Build lookups from assistant messages with tool_calls
   const toolNameMap = new Map<string, string>()
   const toolArgsMap = new Map<string, string>()
@@ -158,24 +157,61 @@ function mapHermesMessages(msgs: HermesMessage[]): Message[] {
   }
 
   const result: Message[] = []
-  for (const msg of msgs) {
-    // Skip assistant messages that only contain tool_calls (no meaningful content)
-    if (msg.role === 'assistant' && msg.tool_calls?.length && !msg.content?.trim()) {
-      // Emit a tool.started message for each tool call
-      for (const tc of msg.tool_calls) {
-        result.push({
-          id: String(msg.id) + '_' + tc.id,
-          role: 'tool',
-          content: '',
-          timestamp: Math.round(msg.timestamp * 1000),
-          toolName: tc.function?.name || 'tool',
-          toolArgs: tc.function?.arguments || undefined,
-          toolStatus: 'done',
-        })
+  const pendingToolMessages: Message[] = []
+
+  const mergeToolIntoAssistantPhase = (toolMessage: Message): boolean => {
+    const toolName = toolMessage.toolName || 'tool'
+    const tcIdMatch = toolMessage.id.match(/(?:^|_)(call_[^_\s]+)/)
+    const tcId = tcIdMatch?.[1] || ''
+    let assistantWithPhase = [...result].reverse().find(
+      m => m.role === 'assistant' && m.phases?.some(
+        p => p.type === 'tool_call'
+          && (
+            (tcId && p.id.includes(tcId))
+            || (!p.toolResult && p.toolName === toolName)
+          )
+      )
+    )
+    let matchingPhase = assistantWithPhase?.phases?.find(
+      p => p.type === 'tool_call'
+        && (
+          (tcId && p.id.includes(tcId))
+          || (!p.toolResult && p.toolName === toolName)
+        )
+    )
+
+    // Visibility/resume can return tool result rows before, after, or without a
+    // persisted assistant tool_call row. In that case, still attach the tool to
+    // the nearest assistant message instead of rendering an orphan role='tool'
+    // card. This keeps refresh and tab-return rendering semantically identical:
+    // thinking card -> tool card chain.
+    if (!matchingPhase) {
+      assistantWithPhase = [...result].reverse().find(m => m.role === 'assistant')
+      if (!assistantWithPhase) return false
+      if (!assistantWithPhase.phases) assistantWithPhase.phases = []
+      matchingPhase = {
+        id: `${assistantWithPhase.id}_${tcId || toolName}_${toolMessage.id}`,
+        type: 'tool_call',
+        content: '',
+        toolName,
+        toolArgs: toolMessage.toolArgs,
+        toolStatus: toolMessage.toolStatus || 'done',
+        isStreaming: false,
+        timestamp: toolMessage.timestamp,
       }
-      continue
+      assistantWithPhase.phases.push(matchingPhase)
     }
 
+    matchingPhase.toolName = toolName
+    matchingPhase.toolArgs = matchingPhase.toolArgs || toolMessage.toolArgs
+    matchingPhase.toolPreview = toolMessage.toolPreview
+    matchingPhase.toolResult = toolMessage.toolResult
+    matchingPhase.toolStatus = toolMessage.toolStatus || 'done'
+    matchingPhase.content = toolMessage.toolResult || ''
+    return true
+  }
+
+  for (const msg of msgs) {
     // Tool result messages
     if (msg.role === 'tool') {
       const tcId = msg.tool_call_id || ''
@@ -191,15 +227,8 @@ function mapHermesMessages(msgs: HermesMessage[]): Message[] {
           preview = msg.content.slice(0, 80)
         }
       }
-      // Find and remove the matching placeholder from tool_calls above
-      const placeholderIdx = result.findIndex(
-        m => m.role === 'tool' && m.toolName === toolName && !m.toolResult && m.id.includes('_' + tcId)
-      )
-      if (placeholderIdx !== -1) {
-        result.splice(placeholderIdx, 1)
-      }
-      result.push({
-        id: String(msg.id),
+      const toolMessage: Message = {
+        id: `${String(msg.id)}_${tcId}`,
         role: 'tool',
         content: '',
         timestamp: Math.round(msg.timestamp * 1000),
@@ -208,8 +237,68 @@ function mapHermesMessages(msgs: HermesMessage[]): Message[] {
         toolPreview: typeof preview === 'string' ? preview.slice(0, 100) || undefined : undefined,
         toolResult: msg.content || undefined,
         toolStatus: 'done',
-      })
+      }
+      if (!mergeToolIntoAssistantPhase(toolMessage)) {
+        pendingToolMessages.push(toolMessage)
+      }
       continue
+    }
+
+    // Rebuild phases for assistant messages (thinking + tool_call phases)
+    // so cards render correctly after page refresh.
+    const phases: Phase[] = []
+
+    // Primary source: dedicated reasoning field
+    const reasoningText = msg.reasoning?.trim() || null
+
+    // Fallback: extract from <think> tags in content (some backends/stores don't persist reasoning separately)
+    let extractedThinking: string | null = null
+    if (!reasoningText && msg.content) {
+      const parsed = parseThinking(msg.content, { streaming: false })
+      if (parsed.hasThinking) {
+        extractedThinking = parsed.segments.join('\n\n')
+        if (parsed.pending) extractedThinking += '\n\n' + parsed.pending
+      }
+    }
+
+    if (reasoningText || extractedThinking) {
+      phases.push({
+        id: String(msg.id) + '_thinking',
+        type: 'thinking',
+        content: reasoningText || extractedThinking!,
+        isStreaming: false,
+        timestamp: Math.round(msg.timestamp * 1000),
+      })
+    }
+    if (msg.finish_reason === 'tool_calls' && msg.tool_calls?.length) {
+      for (const tc of msg.tool_calls) {
+        phases.push({
+          id: String(msg.id) + '_' + (tc.id || 'tc'),
+          type: 'tool_call',
+          content: '',
+          toolName: tc.function?.name || 'tool',
+          toolArgs: tc.function?.arguments || undefined,
+          toolStatus: (tc as any).status || 'done',
+          toolDuration: (tc as any).duration || undefined,
+          isStreaming: false,
+          timestamp: Math.round(msg.timestamp * 1000),
+        })
+      }
+    }
+
+    // Add a final phase if this assistant message has content but no final phase was created.
+    // This handles visibility-change resumption: mapHermesMessages only rebuilds thinking/tool_call
+    // phases from stored data, but the final text lives in message.content.
+    // Without this, hasPhaseTimeline=true (due to thinking/tool_call phases) but the final text
+    // would not be rendered in the phase-timeline path.
+    if (msg.role === 'assistant' && msg.content && !phases.some(p => p.type === 'final')) {
+      phases.push({
+        id: String(msg.id) + '_final',
+        type: 'final',
+        content: msg.content,
+        isStreaming: false,
+        timestamp: Math.round(msg.timestamp * 1000),
+      })
     }
 
     // Normal user/assistant messages
@@ -219,8 +308,15 @@ function mapHermesMessages(msgs: HermesMessage[]): Message[] {
       content: msg.content || '',
       timestamp: Math.round(msg.timestamp * 1000),
       reasoning: msg.reasoning ? msg.reasoning : undefined,
+      phases: phases.length > 0 ? phases : undefined,
     })
   }
+  for (const toolMessage of pendingToolMessages) {
+    if (!mergeToolIntoAssistantPhase(toolMessage)) {
+      result.push(toolMessage)
+    }
+  }
+
   return result
 }
 
@@ -577,10 +673,13 @@ export const useChatStore = defineStore('chat', () => {
     } catch (err) {
       console.error('Failed to load session messages via resume:', err)
     } finally {
-      // Load reasoning via REST API — Socket.IO resume path
-      // doesn't preserve the reasoning field. This ensures thinking
-      // blocks render correctly.
-      await refreshActiveSession()
+      // Only load from REST API if there are no messages yet.
+      // When navigating back to this session, the store already
+      // has the rich phase structure (thinking/tool_call/final with
+      // durations, streaming states) from the streaming path.
+      if (!activeSession.value?.messages.length) {
+        await refreshActiveSession()
+      }
       isLoadingMessages.value = false
     }
 
@@ -889,7 +988,7 @@ export const useChatStore = defineStore('chat', () => {
                   phases.push({
                     id: uid(),
                     type: 'final',
-                    content: next,
+                    content: evt.delta || '',
                     isStreaming: true,
                     timestamp: Date.now(),
                   })
@@ -921,87 +1020,51 @@ export const useChatStore = defineStore('chat', () => {
             case 'tool.started': {
               runHadToolActivity = true
               const msgs = getSessionMsgs(sid)
-              // 找到当前 assistant 消息（可能正在流式思考中）
-              let assistantMsg: Message | null = msgs[msgs.length - 1] ?? null
-              // 如果没有 assistant 消息或不是 assistant，创建一个
-              if (!assistantMsg || assistantMsg.role !== 'assistant') {
+              let assistantMsg = [...msgs].reverse().find(m => m.role === 'assistant' && m.isStreaming)
+              if (!assistantMsg) {
                 const newId = uid()
-                addMessage(sid, {
+                assistantMsg = {
                   id: newId,
                   role: 'assistant',
                   content: '',
                   timestamp: Date.now(),
                   isStreaming: true,
                   phases: [],
-                })
-                assistantMsg = getSessionMsgs(sid).find(m => m.id === newId) ?? null
-              } else if (assistantMsg.isStreaming) {
-                // 停止流式，让 content/reasoning 凝固
-                updateMessage(sid, assistantMsg.id, { isStreaming: false })
-              }
-
-              if (assistantMsg) {
-                // 确保 phases 数组存在
-                if (!assistantMsg.phases) assistantMsg.phases = []
-                // 标记当前 phase（如果最后是 thinking）为已结束
-                const phases = assistantMsg.phases
-                if (phases.length > 0) {
-                  const lastPhase = phases[phases.length - 1]
-                  if (lastPhase.type === 'thinking' && lastPhase.isStreaming) {
-                    lastPhase.isStreaming = false
-                  }
                 }
-                // 添加 tool_call phase
-                const phaseId = uid()
-                const toolPhase: Phase = {
-                  id: phaseId,
-                  type: 'tool_call',
-                  content: '',
-                  toolName: evt.tool || evt.name,
-                  toolPreview: evt.preview,
-                  toolStatus: 'running',
-                  isStreaming: true,
-                  timestamp: Date.now(),
-                }
-                assistantMsg.phases.push(toolPhase)
+                addMessage(sid, assistantMsg)
               }
-
+              if (!assistantMsg.phases) assistantMsg.phases = []
+              assistantMsg.phases.push({
+                id: (evt as any).tool_call_id || uid(),
+                type: 'tool_call',
+                content: '',
+                toolName: (evt as any).tool || (evt as any).name || 'tool',
+                toolArgs: (evt as any).args || (evt as any).arguments,
+                toolPreview: (evt as any).preview || undefined,
+                toolStatus: 'running',
+                isStreaming: true,
+                timestamp: Date.now(),
+              })
               break
             }
 
             case 'tool.completed': {
               runHadToolActivity = true
               const msgs = getSessionMsgs(sid)
-              // 找到最后一个有 tool_call phase 的 assistant 消息
-              for (let i = msgs.length - 1; i >= 0; i--) {
-                const msg = msgs[i]
-                if (msg.role === 'assistant' && msg.phases && msg.phases.length > 0) {
-                  const phases = msg.phases
-                  // 找最后一个 running 的 tool_call phase
-                  for (let j = phases.length - 1; j >= 0; j--) {
-                    if (phases[j].type === 'tool_call' && phases[j].toolStatus === 'running') {
-                      const hasError = (evt as any).error === true
-                      const duration = (evt as any).duration
-                      const rawOutput = (evt as any).output
-                      const toolResult = rawOutput == null
-                        ? undefined
-                        : typeof rawOutput === 'string'
-                          ? rawOutput
-                          : JSON.stringify(rawOutput)
-                      phases[j].toolStatus = hasError ? 'error' : 'done'
-                      phases[j].toolDuration = duration
-                      phases[j].toolResult = toolResult
-                      phases[j].toolPreview = toolResult
-                        ? toolResult.replace(/\s+/g, ' ').slice(0, 140)
-                        : phases[j].toolPreview
-                      phases[j].isStreaming = false
-                      break
-                    }
-                  }
-                  break
-                }
+              const assistantMsg = [...msgs].reverse().find(m => m.role === 'assistant' && m.phases?.length)
+              const phases = assistantMsg?.phases || []
+              const phase = [...phases].reverse().find(p => p.type === 'tool_call' && p.toolStatus === 'running')
+              if (phase) {
+                const output = (evt as any).output
+                const result = output == null ? undefined : (typeof output === 'string' ? output : JSON.stringify(output))
+                const hasError = (evt as any).error === true
+                phase.toolStatus = hasError ? 'error' : 'done'
+                phase.isStreaming = false
+                phase.toolResult = result
+                phase.content = result || ''
+                phase.toolPreview = (evt as any).preview || phase.toolPreview
+                phase.toolDuration = (evt as any).duration || phase.toolDuration
               }
-
               break
             }
 
@@ -1203,6 +1266,7 @@ export const useChatStore = defineStore('chat', () => {
         content: `Error: ${err.message}`,
         timestamp: Date.now(),
       })
+      throw err
     }
   }
 
@@ -1273,12 +1337,33 @@ export const useChatStore = defineStore('chat', () => {
           if (!text) break
           runProducedAssistantText = true
           const msgs = getSessionMsgs(sid)
-          const last = msgs[msgs.length - 1]
-          if (last?.role === 'assistant' && last.isStreaming) {
-            last.reasoning = (last.reasoning || '') + text
-            noteReasoningStart(last.id)
+          let assistantMsg = msgs[msgs.length - 1]
+          if (assistantMsg?.role === 'assistant' && assistantMsg.isStreaming) {
+            assistantMsg.reasoning = (assistantMsg.reasoning || '') + text
+            noteReasoningStart(assistantMsg.id)
+            if (!assistantMsg.phases) assistantMsg.phases = []
+            const phases = assistantMsg.phases
+            const lastPhase = phases[phases.length - 1]
+            if (lastPhase && lastPhase.type === 'thinking' && lastPhase.isStreaming) {
+              lastPhase.content += text
+            } else {
+              phases.push({
+                id: uid(),
+                type: 'thinking',
+                content: text,
+                isStreaming: true,
+                timestamp: Date.now(),
+              })
+            }
           } else {
             const newId = uid()
+            const thinkingPhase: Phase = {
+              id: uid(),
+              type: 'thinking',
+              content: text,
+              isStreaming: true,
+              timestamp: Date.now(),
+            }
             addMessage(sid, {
               id: newId,
               role: 'assistant',
@@ -1286,6 +1371,7 @@ export const useChatStore = defineStore('chat', () => {
               timestamp: Date.now(),
               isStreaming: true,
               reasoning: text,
+              phases: [thinkingPhase],
             })
             noteReasoningStart(newId)
           }
@@ -1313,16 +1399,38 @@ export const useChatStore = defineStore('chat', () => {
             noteThinkingDelta(last.id, prev, next)
             if (last.reasoning) noteReasoningEnd(last.id)
             last.content = next
+            if (!last.phases) last.phases = []
+            const phases = last.phases
+            const lastPhase = phases[phases.length - 1]
+            if (lastPhase && lastPhase.type === 'final' && lastPhase.isStreaming) {
+              lastPhase.content += (evt.delta || '')
+            } else {
+              phases.push({
+                id: uid(),
+                type: 'final',
+                content: evt.delta || '',
+                isStreaming: true,
+                timestamp: Date.now(),
+              })
+            }
           } else {
             const newId = uid()
             const nextContent = evt.delta || ''
             noteThinkingDelta(newId, '', nextContent)
+            const finalPhase: Phase = {
+              id: uid(),
+              type: 'final',
+              content: nextContent,
+              isStreaming: true,
+              timestamp: Date.now(),
+            }
             addMessage(sid, {
               id: newId,
               role: 'assistant',
               content: nextContent,
               timestamp: Date.now(),
               isStreaming: true,
+              phases: [finalPhase],
             })
           }
 
@@ -1332,18 +1440,30 @@ export const useChatStore = defineStore('chat', () => {
         case 'tool.started': {
           runHadToolActivity = true
           const msgs = getSessionMsgs(sid)
-          const last = msgs[msgs.length - 1]
-          if (last?.isStreaming) {
-            updateMessage(sid, last.id, { isStreaming: false })
+          let assistantMsg = [...msgs].reverse().find(m => m.role === 'assistant' && m.isStreaming)
+          if (!assistantMsg) {
+            const newId = uid()
+            assistantMsg = {
+              id: newId,
+              role: 'assistant',
+              content: '',
+              timestamp: Date.now(),
+              isStreaming: true,
+              phases: [],
+            }
+            addMessage(sid, assistantMsg)
           }
-          addMessage(sid, {
-            id: uid(),
-            role: 'tool',
+          if (!assistantMsg.phases) assistantMsg.phases = []
+          assistantMsg.phases.push({
+            id: (evt as any).tool_call_id || uid(),
+            type: 'tool_call',
             content: '',
-            timestamp: Date.now(),
-            toolName: evt.tool || evt.name,
-            toolPreview: evt.preview,
+            toolName: (evt as any).tool || (evt as any).name || 'tool',
+            toolArgs: (evt as any).args || (evt as any).arguments,
+            toolPreview: (evt as any).preview || undefined,
             toolStatus: 'running',
+            isStreaming: true,
+            timestamp: Date.now(),
           })
 
           break
@@ -1352,13 +1472,19 @@ export const useChatStore = defineStore('chat', () => {
         case 'tool.completed': {
           runHadToolActivity = true
           const msgs = getSessionMsgs(sid)
-          const toolMsgs = msgs.filter(m => m.role === 'tool' && m.toolStatus === 'running')
-          if (toolMsgs.length > 0) {
+          const assistantMsg = [...msgs].reverse().find(m => m.role === 'assistant' && m.phases?.length)
+          const phases = assistantMsg?.phases || []
+          const phase = [...phases].reverse().find(p => p.type === 'tool_call' && p.toolStatus === 'running')
+          if (phase) {
+            const output = (evt as any).output
+            const result = output == null ? undefined : (typeof output === 'string' ? output : JSON.stringify(output))
             const hasError = (evt as any).error === true
-            updateMessage(sid, toolMsgs[toolMsgs.length - 1].id, {
-              toolStatus: hasError ? 'error' : 'done',
-              toolDuration: (evt as any).duration,
-            })
+            phase.toolStatus = hasError ? 'error' : 'done'
+            phase.isStreaming = false
+            phase.toolResult = result
+            phase.content = result || ''
+            phase.toolPreview = (evt as any).preview || phase.toolPreview
+            phase.toolDuration = (evt as any).duration || phase.toolDuration
           }
 
           break
@@ -1369,6 +1495,11 @@ export const useChatStore = defineStore('chat', () => {
           const lastMsg = msgs[msgs.length - 1]
           if (lastMsg?.isStreaming) {
             updateMessage(sid, lastMsg.id, { isStreaming: false })
+            if (lastMsg.phases) {
+              for (const phase of lastMsg.phases) {
+                if (phase.isStreaming) phase.isStreaming = false
+              }
+            }
           }
           // Server-computed usage (local countTokens, snapshot-aware)
           if ((evt as any).inputTokens != null) {
@@ -1599,6 +1730,7 @@ export const useChatStore = defineStore('chat', () => {
     isStreaming,
     isRunActive,
     isSessionLive,
+    autoPlaySpeechEnabled,
     compressionState,
     isLoadingSessions,
     sessionsLoaded,

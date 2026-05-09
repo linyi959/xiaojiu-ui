@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { useChatStore } from '@/stores/hermes/chat'
 import { useAppStore } from '@/stores/hermes/app'
@@ -14,10 +14,6 @@ type PresenceState = 'listening' | 'loading' | 'thinking' | 'offline' | 'error'
 
 const COLLAPSE_KEY = 'xr_presence_collapsed'
 const collapsed = ref<boolean>(localStorage.getItem(COLLAPSE_KEY) === '1')
-
-watch(collapsed, v => {
-  try { localStorage.setItem(COLLAPSE_KEY, v ? '1' : '0') } catch { /* ignore */ }
-})
 
 function toggleCollapse() { collapsed.value = !collapsed.value }
 
@@ -51,7 +47,7 @@ const stateCopy = computed(() => {
   return route.name === 'hermes.chat' ? '我在听' : '安静待命'
 })
 
-const moodCopy = computed(() => {
+const moodLabel = computed(() => {
   if (presenceState.value === 'thinking') return activeTool.value ? 'ACTING' : 'THINKING'
   if (presenceState.value === 'loading') return 'SYNCING'
   if (presenceState.value === 'offline') return 'OFFLINE'
@@ -59,7 +55,57 @@ const moodCopy = computed(() => {
   return route.name === 'hermes.chat' ? 'LISTENING' : 'STANDBY'
 })
 
-const linkCopy = computed(() => (appStore.connected ? 'ONLINE' : 'OFFLINE'))
+const moodColor = computed(() => {
+  switch (presenceState.value) {
+    case 'thinking': return '#a98cff'
+    case 'loading':  return '#63e7ff'
+    case 'error':    return '#fde68a'
+    case 'offline':  return '#fb7185'
+    default:         return '#63e7ff'
+  }
+})
+
+const linkLabel = computed(() => (appStore.connected ? 'ONLINE' : 'OFFLINE'))
+
+// 链路信号强度（模拟延迟指示器，真实场景可接 websocket latency）
+const linkStrength = computed(() => {
+  if (!appStore.connected) return 0
+  return 3 // 0-4 格
+})
+
+// 本会话消息速率（条/分钟）
+const messageRate = computed(() => {
+  const msgs = chatStore.messages
+  if (msgs.length < 2) return null
+  const first = msgs[0]
+  const last = msgs[msgs.length - 1]
+  if (!first?.timestamp || !last?.timestamp) return null
+  const diff = new Date(last.timestamp).getTime() - new Date(first.timestamp).getTime()
+  if (diff <= 0) return null
+  const rate = Math.round((msgs.length / diff) * 60000)
+  if (rate < 0.5) return null
+  if (rate < 2) return '<2'
+  return `${rate}`
+})
+
+// 工具活动详细描述（中文）
+const toolActivityLabel = computed(() => {
+  if (!activeTool.value?.toolName) return ''
+  const name = activeTool.value.toolName
+  if (name.includes('web_search')) return '正在搜索网络'
+  if (name.includes('terminal')) return '正在执行终端'
+  if (name.includes('file')) return '正在读写文件'
+  if (name.includes('memory')) return '正在访问记忆'
+  if (name.includes('code')) return '正在编写代码'
+  return `执行 ${name}`
+})
+
+// 上下文占用（估算，基于消息数量）
+const contextUsage = computed(() => {
+  const n = chatStore.messages.length
+  const usage = Math.min(Math.round((n / 100) * 100), 100)
+  return usage
+})
 
 const characterVideo = computed(() => {
   switch (presenceState.value) {
@@ -73,15 +119,7 @@ const characterVideo = computed(() => {
   }
 })
 
-const sessionTitle = computed(() => chatStore.activeSession?.title || '新的对话')
-const activityCopy = computed(() => {
-  if (activeTool.value?.toolName) return activeTool.value.toolName
-  if (chatStore.isStreaming) return '正在回你'
-  if (chatStore.isLoadingMessages) return '翻一下刚才'
-  if (lastSystemError.value) return '收一下刚才那步'
-  return '在这儿陪着'
-})
-
+// bubbleCopy: 用于视频上方气泡
 const bubbleCopy = computed(() => {
   if (presenceState.value === 'thinking') {
     if (activeTool.value?.toolName) return `${activeTool.value.toolName}…`
@@ -92,6 +130,85 @@ const bubbleCopy = computed(() => {
   if (presenceState.value === 'error') return '刚才那步错了。'
   if (route.name === 'hermes.chat') return '说吧。'
   return ''
+})
+
+// 会话情报 computed
+const messageCount = computed(() => {
+  const n = chatStore.activeSession?.messageCount ?? chatStore.messages.length ?? 0
+  return n
+})
+const lastMessageTime = computed(() => {
+  const msgs = chatStore.messages
+  if (!msgs.length) return null
+  const last = msgs[msgs.length - 1]
+  if (!last?.timestamp) return null
+  const d = new Date(last.timestamp)
+  return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`
+})
+const modelLabel = computed(() => appStore.selectedModel || '—')
+const activityToolName = computed(() => activeTool.value?.toolName || '')
+
+// 顶部舱顶计时：每秒刷新的 HH:mm:ss 格式
+const roofTimer = ref('00:00:00')
+let roofTimerInterval: ReturnType<typeof setInterval> | null = null
+
+function updateRoofTimer() {
+  const msgs = chatStore.messages
+  if (!msgs.length) { roofTimer.value = '00:00:00'; return }
+  const first = msgs[0]
+  if (!first?.timestamp) { roofTimer.value = '00:00:00'; return }
+  const diff = Date.now() - new Date(first.timestamp).getTime()
+  if (diff < 0) { roofTimer.value = '00:00:00'; return }
+  const totalSec = Math.floor(diff / 1000)
+  const hh = Math.floor(totalSec / 3600)
+  const mm = Math.floor((totalSec % 3600) / 60)
+  const ss = totalSec % 60
+  roofTimer.value = `${hh.toString().padStart(2, '0')}:${mm.toString().padStart(2, '0')}:${ss.toString().padStart(2, '0')}`
+}
+
+// 任务计时：工具运行中每秒刷新 MM:SS
+const taskDuration = ref('00:00')
+let taskTimerInterval: ReturnType<typeof setInterval> | null = null
+
+function updateTaskTimer() {
+  const tool = activeTool.value
+  if (!tool?.timestamp) { taskDuration.value = '00:00'; return }
+  const diff = Date.now() - new Date(tool.timestamp).getTime()
+  if (diff < 0) { taskDuration.value = '00:00'; return }
+  const totalSec = Math.floor(diff / 1000)
+  const mm = Math.floor(totalSec / 60)
+  const ss = totalSec % 60
+  taskDuration.value = `${mm.toString().padStart(2, '0')}:${ss.toString().padStart(2, '0')}`
+}
+
+function startTaskTimer() {
+  stopTaskTimer()
+  updateTaskTimer()
+  taskTimerInterval = setInterval(updateTaskTimer, 1000)
+}
+
+function stopTaskTimer() {
+  if (taskTimerInterval !== null) { clearInterval(taskTimerInterval); taskTimerInterval = null }
+}
+
+watch(activeTool, (newTool) => {
+  if (newTool) startTaskTimer()
+  else stopTaskTimer()
+})
+
+watch(collapsed, v => {
+  try { localStorage.setItem(COLLAPSE_KEY, v ? '1' : '0') } catch { /* ignore */ }
+})
+
+onMounted(() => {
+  updateRoofTimer()
+  roofTimerInterval = setInterval(updateRoofTimer, 1000)
+  if (activeTool.value) startTaskTimer()
+})
+
+onUnmounted(() => {
+  if (roofTimerInterval !== null) clearInterval(roofTimerInterval)
+  stopTaskTimer()
 })
 </script>
 
@@ -135,27 +252,55 @@ const bubbleCopy = computed(() => {
     <div class="side-energy side-energy-right" />
 
     <header v-if="!collapsed" class="presence-head">
-      <div class="head-shell-plate">
-        <div class="presence-eyebrow-row">
-          <p>XIAOJIU PRESENCE</p>
-          <span class="presence-divider" />
-          <small>{{ moodCopy }}</small>
-        </div>
-        <div class="presence-headline-row">
-          <div class="presence-headline">
-            <strong>{{ stateCopy }}</strong>
-            <span class="presence-subtext">只为你亮着</span>
-          </div>
-          <span class="presence-status" aria-label="连接状态">
-            <i />
-            {{ linkCopy }}
-          </span>
-        </div>
+      <!-- 舱顶计时行 -->
+      <div class="roof-timer-row">
+        <span class="roof-play" :style="{ color: moodColor }">▶</span>
+        <span class="roof-timer-value" :style="{ color: moodColor }">{{ roofTimer }}</span>
+        <span class="roof-sep" />
+        <span class="roof-sess-tag">SESS</span>
+        <span class="roof-online-tag" :class="{ 'is-offline': !appStore.connected }">
+          {{ appStore.connected ? 'ONLINE' : 'OFFL' }}
+        </span>
       </div>
-      <div class="head-flowline" aria-hidden="true">
-        <span class="flowline-node" />
-        <span class="flowline-track" />
-        <span class="flowline-signal">PRESENCE LIVE</span>
+
+      <div class="head-energy-bar" :style="{ background: moodColor }" />
+
+      <div class="presence-state-row">
+        <span class="state-badge" :style="{ color: moodColor }">
+          <i class="state-dot" />
+          {{ moodLabel }}
+        </span>
+        <span class="presence-divider" />
+        <span class="link-badge" :class="{ 'is-offline': !appStore.connected }">
+          <i class="link-dot" />
+          {{ linkLabel }}
+        </span>
+        <!-- 信号强度阶梯 -->
+        <span class="signal-bars" :class="{ 'is-offline': !appStore.connected }">
+          <i v-for="n in 4" :key="n" class="signal-bar" :class="{ active: appStore.connected && n <= linkStrength }" />
+        </span>
+      </div>
+
+      <div class="session-info-strip">
+        <div class="session-info-item">
+          <span class="info-label">模型</span>
+          <span class="info-value model-tag">{{ modelLabel }}</span>
+        </div>
+        <div class="session-info-divider" />
+        <div class="session-info-item">
+          <span class="info-label">消息</span>
+          <span class="info-value">{{ messageCount }} 条</span>
+        </div>
+        <div class="session-info-divider" />
+        <div v-if="messageRate" class="session-info-item">
+          <span class="info-label">速率</span>
+          <span class="info-value rate-tag">{{ messageRate }}/分</span>
+        </div>
+        <div v-if="messageRate && lastMessageTime" class="session-info-divider" />
+        <div v-if="lastMessageTime" class="session-info-item">
+          <span class="info-label">最后</span>
+          <span class="info-value">{{ lastMessageTime }}</span>
+        </div>
       </div>
     </header>
 
@@ -208,21 +353,49 @@ const bubbleCopy = computed(() => {
       <div class="floor-reflection" />
     </section>
 
-    <footer v-if="!collapsed" class="status-strip" aria-label="小九状态基座">
-      <div class="status-base-shell">
-        <span class="base-rail base-rail-left" />
-        <div class="base-core">
-          <div class="base-readout">
-            <span>SESSION</span>
-            <strong :title="sessionTitle">{{ sessionTitle }}</strong>
-          </div>
-          <div class="base-divider" />
-          <div class="base-readout">
-            <span>ACTIVITY</span>
-            <strong :title="activityCopy">{{ activityCopy }}</strong>
-          </div>
+    <footer v-if="!collapsed" class="presence-footer">
+      <div class="footer-energy-bar" :style="{ background: moodColor }" />
+
+      <!-- 任务计时行（工具运行时显示） -->
+      <div v-if="activityToolName" class="task-timer-row">
+        <span class="task-timer-label" :style="{ color: moodColor }">▶ TASK</span>
+        <span class="task-timer-value" :style="{ color: moodColor }">{{ taskDuration || '00:00' }}</span>
+        <span class="task-timer-desc">{{ toolActivityLabel }}</span>
+      </div>
+
+      <!-- 底座数据行：mood + 上下文占用（同区） -->
+      <div class="pedestal-data-row">
+        <span class="mood-dot" :style="{ background: moodColor, boxShadow: `0 0 8px ${moodColor}` }" />
+        <span class="mood-text">{{ stateCopy }}</span>
+        <span class="pedestal-sep" />
+        <span class="context-label">CONTEXT</span>
+        <div class="context-bar-track">
+          <div
+            class="context-bar-fill"
+            :style="{
+              width: contextUsage + '%',
+              background: contextUsage > 80 ? '#fde68a' : '#a98cff',
+              boxShadow: `0 0 6px ${contextUsage > 80 ? '#fde68a' : '#a98cff'}`
+            }"
+          />
         </div>
-        <span class="base-rail base-rail-right" />
+        <span class="context-value">{{ contextUsage }}%</span>
+      </div>
+
+      <!-- 上下文占用进度条（保留独立行，高密度时收起） -->
+      <div class="context-meter-row">
+        <span class="context-label">上下文</span>
+        <div class="context-bar-track">
+          <div
+            class="context-bar-fill"
+            :style="{
+              width: contextUsage + '%',
+              background: contextUsage > 80 ? '#fde68a' : '#a98cff',
+              boxShadow: `0 0 6px ${contextUsage > 80 ? '#fde68a' : '#a98cff'}`
+            }"
+          />
+        </div>
+        <span class="context-value">{{ contextUsage }}%</span>
       </div>
     </footer>
 
@@ -329,168 +502,422 @@ const bubbleCopy = computed(() => {
 
 .presence-head,
 .presence-capsule,
-.status-strip,
+.presence-footer,
 .collapsed-pulse {
   position: relative;
   z-index: 1;
 }
 
 .presence-head {
-  display: grid;
-  gap: 8px;
-  min-height: 72px;
-  padding: 2px 0 0 32px;
-}
-
-.head-shell-plate {
   position: relative;
-  display: grid;
-  gap: 7px;
-  padding: 8px 10px 10px 0;
-}
-
-.head-shell-plate::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 34px;
-  height: 1px;
-  background: linear-gradient(90deg, rgba(99, 231, 255, 0.34), rgba(99, 231, 255, 0.02));
-}
-
-.head-shell-plate::after {
-  content: '';
-  position: absolute;
-  top: 0;
-  right: 24px;
-  width: 10px;
-  height: 10px;
-  border-top: 1px solid rgba(99, 231, 255, 0.2);
-  border-right: 1px solid rgba(99, 231, 255, 0.16);
-  border-top-right-radius: 10px;
-  opacity: 0.9;
-}
-
-.presence-kicker {
-  display: grid;
-  gap: 7px;
-  min-width: 0;
-}
-
-.presence-headline-row {
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 4px 4px;
+  min-height: 72px;
 }
 
-.head-flowline {
+.roof-timer-row {
   display: flex;
   align-items: center;
-  gap: 7px;
-  padding-left: 3px;
-  color: rgba(185, 201, 222, 0.46);
-  font-family: 'Fira Code', monospace;
-  font-size: 7px;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
+  gap: 5px;
+  padding: 0 2px;
 }
 
-.flowline-node {
-  width: 4px;
-  height: 4px;
-  border-radius: 999px;
-  background: rgba(99, 231, 255, 0.82);
-  box-shadow: 0 0 8px rgba(99, 231, 255, 0.34);
+.roof-play {
+  font-size: 7px;
+  flex-shrink: 0;
+  opacity: 0.8;
+}
+
+.roof-timer-value {
+  font-family: 'Fira Code', monospace;
+  font-size: 9px;
+  letter-spacing: 0.06em;
   flex-shrink: 0;
 }
 
-.flowline-track {
-  width: 44px;
+.roof-sep {
+  width: 12px;
   height: 1px;
-  background: linear-gradient(90deg, rgba(99, 231, 255, 0.3), rgba(99, 231, 255, 0.04));
+  background: rgba(99, 231, 255, 0.2);
+  flex-shrink: 0;
+  margin: 0 2px;
 }
 
-.flowline-signal {
-  white-space: nowrap;
-}
-
-.presence-eyebrow-row {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-
-  p,
-  small {
-    margin: 0;
-    font-family: 'Fira Code', monospace;
-    font-size: 8px;
-    letter-spacing: 0.18em;
-    text-transform: uppercase;
-  }
-
-  p {
-    color: rgba(99, 231, 255, 0.82);
-  }
-
-  small {
-    color: rgba(185, 201, 222, 0.38);
-  }
-}
-
-.presence-divider {
-  width: 14px;
-  height: 1px;
-  border-radius: 999px;
-  background: linear-gradient(90deg, rgba(99, 231, 255, 0.32), rgba(99, 231, 255, 0));
-}
-
-.presence-headline {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-
-  strong {
-    display: block;
-    max-width: 136px;
-    font-size: 16px;
-    line-height: 1.05;
-    letter-spacing: -0.03em;
-    text-shadow: 0 0 10px rgba(99, 231, 255, 0.06);
-  }
-}
-
-.presence-subtext {
-  color: rgba(185, 201, 222, 0.42);
-  font-size: 9px;
-  letter-spacing: 0.06em;
-}
-
-.presence-status {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 1px;
-  padding: 4px 0 4px 8px;
-  border-left: 1px solid rgba(99, 231, 255, 0.14);
-  border-radius: 0;
-  color: rgba(203, 213, 225, 0.72);
-  background: transparent;
-  box-shadow: none;
+.roof-sess-tag {
   font-family: 'Fira Code', monospace;
   font-size: 7px;
-  letter-spacing: 0.16em;
-  white-space: nowrap;
+  letter-spacing: 0.14em;
+  color: rgba(99, 231, 255, 0.45);
+  flex-shrink: 0;
+}
 
-  i {
+.roof-online-tag {
+  font-family: 'Fira Code', monospace;
+  font-size: 7px;
+  letter-spacing: 0.12em;
+  color: rgba(99, 231, 255, 0.75);
+  flex-shrink: 0;
+
+  &.is-offline {
+    color: rgba(251, 113, 133, 0.65);
+  }
+}
+
+.presence-state-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 6px;
+  padding-top: 2px;
+}
+
+.state-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: 'Fira Code', monospace;
+  font-size: 8px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+
+  .state-dot {
     width: 5px;
     height: 5px;
     border-radius: 50%;
-    background: var(--xr-cyan);
-    box-shadow: 0 0 12px rgba(99, 231, 255, 0.72);
+    background: currentColor;
+    box-shadow: 0 0 8px currentColor;
+    animation: blink 1.6s ease-in-out infinite;
   }
 }
+
+.link-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: 'Fira Code', monospace;
+  font-size: 8px;
+  letter-spacing: 0.14em;
+  color: rgba(99, 231, 255, 0.65);
+
+  .link-dot {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: #63e7ff;
+    box-shadow: 0 0 8px rgba(99, 231, 255, 0.7);
+  }
+
+  &.is-offline {
+    color: rgba(251, 113, 133, 0.65);
+    .link-dot {
+      background: #fb7185;
+      box-shadow: 0 0 8px rgba(251, 113, 133, 0.7);
+    }
+  }
+}
+
+.signal-bars {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 12px;
+  max-width: 20px;
+  overflow: hidden;
+}
+
+.signal-bar {
+  width: 3px;
+  background: rgba(99, 231, 255, 0.2);
+  border-radius: 1px;
+  transition: background 0.3s ease, box-shadow 0.3s ease;
+
+  &:nth-child(1) { height: 4px; }
+  &:nth-child(2) { height: 6px; }
+  &:nth-child(3) { height: 8px; }
+  &:nth-child(4) { height: 10px; }
+
+  &.active {
+    background: #63e7ff;
+    box-shadow: 0 0 6px rgba(99, 231, 255, 0.8);
+  }
+}
+
+.rate-tag {
+  color: rgba(99, 231, 255, 0.85) !important;
+}
+
+.presence-divider {
+  width: 12px;
+  height: 1px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(99, 231, 255, 0.28), rgba(99, 231, 255, 0.06));
+  flex-shrink: 0;
+}
+
+.head-energy-bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  border-radius: 999px 999px 0 0;
+  opacity: 0.85;
+  background: linear-gradient(90deg, transparent 0%, v-bind(moodColor) 40%, v-bind(moodColor) 70%, transparent 100%);
+  box-shadow: 0 0 12px v-bind(moodColor);
+}
+
+.session-info-strip {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0;
+  padding: 1px 0 3px;
+  row-gap: 2px;
+}
+
+.session-info-item {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+}
+
+.info-label {
+  font-family: 'PingFang SC', 'Helvetica Neue', sans-serif;
+  font-size: 8px;
+  color: rgba(148, 163, 184, 0.5);
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+}
+
+.info-value {
+  font-family: 'Fira Code', 'Courier New', monospace;
+  font-size: 8px;
+  color: rgba(203, 213, 225, 0.7);
+  letter-spacing: 0.02em;
+  max-width: 56px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-tag {
+  max-width: 52px;
+  color: rgba(99, 231, 255, 0.85);
+}
+
+.rate-tag {
+  color: rgba(99, 231, 255, 0.85) !important;
+}
+
+.session-info-divider {
+  width: 1px;
+  height: 8px;
+  background: rgba(99, 231, 255, 0.15);
+  margin: 0 5px;
+  flex-shrink: 0;
+}
+
+.presence-footer {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding-top: 4px;
+}
+
+.footer-energy-bar {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  border-radius: 0 0 999px 999px;
+  opacity: 0.6;
+  background: linear-gradient(90deg, transparent 0%, v-bind(moodColor) 40%, v-bind(moodColor) 70%, transparent 100%);
+  box-shadow: 0 0 8px v-bind(moodColor);
+}
+
+.footer-mood-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 0 2px;
+  border-top: 1px solid rgba(99, 231, 255, 0.08);
+}
+
+.task-timer-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 0 3px;
+  border-top: 1px solid rgba(169, 140, 255, 0.1);
+}
+
+.task-timer-label {
+  font-family: 'Fira Code', monospace;
+  font-size: 8px;
+  letter-spacing: 0.1em;
+  flex-shrink: 0;
+}
+
+.task-timer-value {
+  font-family: 'Fira Code', monospace;
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  flex-shrink: 0;
+}
+
+.task-timer-desc {
+  font-family: 'PingFang SC', 'Helvetica Neue', sans-serif;
+  font-size: 8px;
+  color: rgba(148, 163, 184, 0.55);
+  letter-spacing: 0.03em;
+  flex-shrink: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pedestal-data-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 0 2px;
+  flex-wrap: nowrap;
+}
+
+.pedestal-sep {
+  width: 1px;
+  height: 8px;
+  background: rgba(99, 231, 255, 0.15);
+  flex-shrink: 0;
+  margin: 0 2px;
+}
+
+.mood-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  animation: blink 2s ease-in-out infinite;
+}
+
+.mood-text {
+  font-family: 'PingFang SC', 'Helvetica Neue', sans-serif;
+  font-size: 10px;
+  color: rgba(203, 213, 225, 0.72);
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.footer-activity-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 0;
+  padding: 3px 0 5px;
+}
+
+.activity-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.activity-label {
+  font-family: 'PingFang SC', 'Helvetica Neue', sans-serif;
+  font-size: 9px;
+  color: rgba(148, 163, 184, 0.5);
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+}
+
+.activity-value {
+  font-family: 'Fira Code', 'Courier New', monospace;
+  font-size: 9px;
+  color: rgba(169, 140, 255, 0.8);
+  letter-spacing: 0.02em;
+  max-width: 72px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.footer-divider {
+  width: 1px;
+  height: 10px;
+  background: rgba(169, 140, 255, 0.2);
+  margin: 0 6px;
+  flex-shrink: 0;
+}
+
+.activity-desc {
+  font-family: 'PingFang SC', 'Helvetica Neue', sans-serif;
+  font-size: 9px;
+  color: rgba(148, 163, 184, 0.6);
+  letter-spacing: 0.03em;
+  flex-shrink: 0;
+}
+
+.activity-name {
+  font-family: 'Fira Code', monospace;
+  font-size: 9px;
+  color: rgba(169, 140, 255, 0.85);
+  letter-spacing: 0.02em;
+  max-width: 72px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex-shrink: 1;
+}
+
+.context-meter-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 0 4px;
+  border-top: 1px solid rgba(99, 231, 255, 0.05);
+}
+
+.context-label {
+  font-family: 'PingFang SC', 'Helvetica Neue', sans-serif;
+  font-size: 9px;
+  color: rgba(148, 163, 184, 0.5);
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+}
+
+.context-bar-track {
+  flex: 1;
+  height: 3px;
+  border-radius: 999px;
+  background: rgba(169, 140, 255, 0.12);
+  overflow: hidden;
+}
+
+.context-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  transition: width 0.4s ease, background 0.3s ease;
+}
+
+.context-value {
+  font-family: 'Fira Code', monospace;
+  font-size: 8px;
+  color: rgba(169, 140, 255, 0.7);
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+  min-width: 24px;
+  text-align: right;
+}
+
+.is-collapsed .presence-footer { display: none; }
 
 .presence-capsule {
   position: relative;
@@ -953,87 +1380,6 @@ const bubbleCopy = computed(() => {
   bottom: calc(50% - 50px);
 }
 
-.status-strip {
-  position: relative;
-  padding-top: 8px;
-}
-
-.status-base-shell {
-  position: relative;
-  display: grid;
-  grid-template-columns: 22px minmax(0, 1fr) 22px;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 0 2px;
-}
-
-.base-rail {
-  position: relative;
-  display: block;
-  height: 1px;
-  border-radius: 999px;
-  background: linear-gradient(90deg, rgba(99, 231, 255, 0.02), rgba(99, 231, 255, 0.22), rgba(99, 231, 255, 0.02));
-}
-
-.base-core {
-  position: relative;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-  padding: 8px 10px 9px;
-  border-top: 1px solid rgba(99, 231, 255, 0.14);
-  border-bottom: 1px solid rgba(99, 231, 255, 0.06);
-  border-radius: 16px 16px 20px 20px;
-  background: linear-gradient(180deg, rgba(10, 18, 34, 0.18), rgba(5, 10, 21, 0.42));
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.03),
-    inset 0 -10px 20px rgba(3, 7, 18, 0.14);
-}
-
-.base-core::before {
-  content: '';
-  position: absolute;
-  left: 16px;
-  right: 16px;
-  bottom: -8px;
-  height: 14px;
-  border-radius: 50%;
-  background: radial-gradient(ellipse, rgba(99, 231, 255, 0.1), rgba(77, 141, 255, 0.03) 48%, transparent 78%);
-  filter: blur(8px);
-  opacity: 0.76;
-}
-
-.base-readout {
-  display: grid;
-  gap: 3px;
-  min-width: 0;
-  font-family: 'Fira Code', 'PingFang SC', monospace;
-
-  span {
-    color: rgba(99, 231, 255, 0.42);
-    font-size: 7px;
-    letter-spacing: 0.18em;
-  }
-
-  strong {
-    min-width: 0;
-    color: rgba(237, 247, 255, 0.78);
-    font-size: 9px;
-    font-weight: 500;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-}
-
-.base-divider {
-  width: 1px;
-  height: 24px;
-  background: linear-gradient(180deg, rgba(99, 231, 255, 0.02), rgba(99, 231, 255, 0.2), rgba(99, 231, 255, 0.04));
-}
-
 .collapsed-pulse {
   display: grid;
   place-items: center;
@@ -1056,7 +1402,6 @@ const bubbleCopy = computed(() => {
   .character-stage { animation: breathe 1.7s ease-in-out infinite; }
   .mini-telemetry { opacity: 0.36; }
   .floor-light { animation-duration: 1.55s; }
-  .presence-status i { animation: blink 1.2s ease-in-out infinite; }
   .collapsed-pulse .pulse-dot { animation-duration: 0.7s; }
 }
 
@@ -1067,16 +1412,6 @@ const bubbleCopy = computed(() => {
 }
 
 .error {
-  .presence-status {
-    color: #fde68a;
-    border-color: rgba(255, 211, 122, 0.24);
-
-    i {
-      background: var(--xr-warning);
-      box-shadow: 0 0 13px rgba(255, 211, 122, 0.74);
-    }
-  }
-
   .ring-outer { border-top-color: rgba(255, 211, 122, 0.74); }
 
   .collapsed-pulse .pulse-dot {
@@ -1087,22 +1422,6 @@ const bubbleCopy = computed(() => {
 
 .offline {
   filter: saturate(0.55) brightness(0.72);
-
-  .presence-status {
-    color: #fecaca;
-    border-color: rgba(251, 113, 133, 0.2);
-
-    i {
-      background: var(--xr-danger);
-      box-shadow: 0 0 12px rgba(251, 113, 133, 0.68);
-    }
-  }
-
-  .scan-ring,
-  .mini-telemetry,
-  .floor-light,
-  .floor-reflection,
-  .character-seat-glow { opacity: 0.18; }
 
   .collapsed-pulse .pulse-dot {
     background: var(--xr-danger);
@@ -1135,7 +1454,7 @@ const bubbleCopy = computed(() => {
   .xiaojiu-presence-dock.is-collapsed { width: 52px; padding: 40px 4px 10px; }
 
   .presence-head,
-  .status-strip {
+  .presence-footer {
     display: none;
   }
 

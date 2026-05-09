@@ -193,6 +193,47 @@ function tableExists(db: NonNullable<ReturnType<typeof getDb>>, tableName: strin
   return !!result
 }
 
+function recoverLegacySessionUsageRows(db: NonNullable<ReturnType<typeof getDb>>, legacyTable: string): void {
+  if (!tableExists(db, legacyTable) || !tableExists(db, USAGE_TABLE)) return
+
+  const legacy = getTableStructure(db, legacyTable)
+  if (!legacy.columns.has('session_id')) {
+    db.exec(`DROP TABLE ${quoteIdentifier(legacyTable)}`)
+    return
+  }
+
+  const valueExpr = (column: string, fallback: string): string =>
+    legacy.columns.has(column) ? quoteIdentifier(column) : fallback
+  const createdAtExpr = legacy.columns.has('created_at')
+    ? quoteIdentifier('created_at')
+    : legacy.columns.has('updated_at')
+      ? quoteIdentifier('updated_at')
+      : String(Date.now())
+
+  db.exec(`
+    INSERT INTO ${quoteIdentifier(USAGE_TABLE)} (
+      session_id, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
+      reasoning_tokens, model, profile, created_at
+    )
+    SELECT
+      ${quoteIdentifier('session_id')},
+      ${valueExpr('input_tokens', '0')},
+      ${valueExpr('output_tokens', '0')},
+      ${valueExpr('cache_read_tokens', '0')},
+      ${valueExpr('cache_write_tokens', '0')},
+      ${valueExpr('reasoning_tokens', '0')},
+      ${valueExpr('model', "''")},
+      ${valueExpr('profile', "'default'")},
+      ${createdAtExpr}
+    FROM ${quoteIdentifier(legacyTable)}
+    WHERE NOT EXISTS (
+      SELECT 1 FROM ${quoteIdentifier(USAGE_TABLE)} u
+      WHERE u.session_id = ${quoteIdentifier(legacyTable)}.${quoteIdentifier('session_id')}
+    )
+  `)
+  db.exec(`DROP TABLE ${quoteIdentifier(legacyTable)}`)
+}
+
 /**
  * 获取表的实际结构（包括主键）
  */
@@ -320,11 +361,37 @@ function rebuildTable(
 
   // 3. 复制数据
   if (commonCols.length > 0) {
-    const colList = commonCols.map(c => quoteIdentifier(c)).join(', ')
-    db.exec(`
-      INSERT INTO ${quoteIdentifier(tempTable)} (${colList})
-      SELECT ${colList} FROM ${quoteIdentifier(tableName)}
-    `)
+    if (tableName === USAGE_TABLE) {
+      const actualCols = actual.columns
+      const insertCols = [
+        'session_id',
+        'input_tokens',
+        'output_tokens',
+        'cache_read_tokens',
+        'cache_write_tokens',
+        'reasoning_tokens',
+        'model',
+        'profile',
+        'created_at',
+      ].filter((col) => schema[col])
+      const selectExprs = insertCols.map((col) => {
+        if (actualCols.has(col)) return quoteIdentifier(col)
+        if (col === 'created_at' && actualCols.has('updated_at')) return quoteIdentifier('updated_at')
+        if (col === 'model') return "''"
+        if (col === 'profile') return "'default'"
+        return '0'
+      })
+      db.exec(`
+        INSERT INTO ${quoteIdentifier(tempTable)} (${insertCols.map(c => quoteIdentifier(c)).join(', ')})
+        SELECT ${selectExprs.join(', ')} FROM ${quoteIdentifier(tableName)}
+      `)
+    } else {
+      const colList = commonCols.map(c => quoteIdentifier(c)).join(', ')
+      db.exec(`
+        INSERT INTO ${quoteIdentifier(tempTable)} (${colList})
+        SELECT ${colList} FROM ${quoteIdentifier(tableName)}
+      `)
+    }
   }
 
   // 4. 删除旧表
@@ -460,6 +527,7 @@ export function initAllHermesTables(retryCount = 0): void {
   try {
     // Usage store
     syncTable(USAGE_TABLE, USAGE_SCHEMA, { primaryKey: 'id' })
+    recoverLegacySessionUsageRows(db, `${USAGE_TABLE}_old`)
 
     // Session store
     syncTable(SESSIONS_TABLE, SESSIONS_SCHEMA)

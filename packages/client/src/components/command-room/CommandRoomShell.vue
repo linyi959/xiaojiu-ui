@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useRoute } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import { useAppStore } from '@/stores/hermes/app'
 import { useChatStore } from '@/stores/hermes/chat'
@@ -7,10 +8,14 @@ import CommandModuleRail from './CommandModuleRail.vue'
 import CommandStageFrame from './CommandStageFrame.vue'
 import XiaojiuPresenceDock from './XiaojiuPresenceDock.vue'
 
+const route = useRoute()
 const appStore = useAppStore()
 const chatStore = useChatStore()
 const { connected } = storeToRefs(appStore)
 const { isStreaming } = storeToRefs(chatStore)
+
+// Monitor 页面隐藏 Dock，任务舱居中央
+const showDock = computed(() => route.meta?.hidePresenceDock !== true)
 
 // Shell 级 mood：决定外缘光、整体氛围
 // 与 PresenceDock 的 mood 保持一致
@@ -27,7 +32,7 @@ const shellMood = computed<'offline' | 'thinking' | 'idle'>(() => {
     <CommandStageFrame>
       <slot />
     </CommandStageFrame>
-    <XiaojiuPresenceDock />
+    <XiaojiuPresenceDock v-if="showDock" />
     <div class="shell-aura" aria-hidden="true" />
   </div>
 </template>

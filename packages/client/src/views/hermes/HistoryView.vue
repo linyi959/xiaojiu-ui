@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
-import { useChatStore, type Session } from '@/stores/hermes/chat'
+import { useChatStore, type Session, mapHermesMessages } from '@/stores/hermes/chat'
 import { useAppStore } from '@/stores/hermes/app'
 import { useProfilesStore } from '@/stores/hermes/profiles'
 import { useSessionBrowserPrefsStore } from '@/stores/hermes/session-browser-prefs'
@@ -70,31 +70,7 @@ async function handleSessionClick(sessionId: string) {
     endedAt: sessionDetail.ended_at ? sessionDetail.ended_at * 1000 : undefined,
     lastActiveAt: sessionDetail.last_active ? sessionDetail.last_active * 1000 : undefined,
     workspace: sessionDetail.workspace || undefined,
-    messages: sessionDetail.messages.map(m => {
-      const msg: any = {
-        id: String(m.id),
-        sessionId: m.session_id,
-        role: m.role,
-        content: m.content || '',
-        timestamp: m.timestamp * 1000,
-      }
-
-      // Preserve tool-related fields
-      if (m.role === 'tool') {
-        msg.toolName = m.tool_name
-        msg.toolArgs = m.tool_calls?.[0]?.function?.arguments
-          ? JSON.stringify(m.tool_calls[0].function.arguments)
-          : undefined
-        msg.toolStatus = 'done'
-      }
-
-      // Preserve reasoning field
-      if (m.reasoning) {
-        msg.reasoning = m.reasoning
-      }
-
-      return msg
-    }),
+    messages: mapHermesMessages(sessionDetail.messages || []),
   }
 
   // Set history page's own session state (independent from chatStore)
@@ -129,7 +105,19 @@ const showRenameModal = ref(false)
 const renameValue = ref('')
 const renameSessionId = ref<string | null>(null)
 const renameInputRef = ref<InstanceType<typeof NInput> | null>(null)
-const collapsedGroups = ref<Set<string>>(new Set(JSON.parse(localStorage.getItem('hermes_collapsed_groups') || '[]')))
+function loadCollapsedGroups(): Set<string> {
+  try {
+    const raw = localStorage.getItem('hermes_collapsed_groups')
+    if (!raw) return new Set()
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? new Set(parsed.filter((v: unknown): v is string => typeof v === 'string')) : new Set()
+  } catch {
+    localStorage.removeItem('hermes_collapsed_groups')
+    return new Set()
+  }
+}
+
+const collapsedGroups = ref<Set<string>>(loadCollapsedGroups())
 
 // Convert SessionSummary to Session format
 function sessionSummaryToSession(summary: SessionSummary): Session {

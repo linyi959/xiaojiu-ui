@@ -245,6 +245,9 @@ let activeTerm: Terminal | null = null;
 let activeFitAddon: FitAddon | null = null;
 let resizeObserver: ResizeObserver | null = null;
 let mobileQuery: MediaQueryList | null = null;
+let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let isUnmounted = false;
+let shouldReconnect = true;
 
 // ─── Computed ──────────────────────────────────────────────────
 
@@ -280,22 +283,32 @@ function buildWsUrl(): string {
     return `${wsProtocol}//${new URL(base).host}/api/hermes/terminal${token ? `?token=${encodeURIComponent(token)}` : ""}`;
   }
 
-  // Dev mode: connect directly to backend port; Production: same host
+  // Dev + Prod: connect directly to backend server (9601)
+  // Vite dev server (8648) does not proxy WebSocket upgrades — bypass it
+  const devBackendPort = '9601';
   const host = import.meta.env.DEV
-    ? `${location.hostname}:8648`
+    ? `${location.hostname}:${devBackendPort}`
     : location.host;
   return `${wsProtocol}//${host}/api/hermes/terminal${token ? `?token=${encodeURIComponent(token)}` : ""}`;
 }
 
 function connect() {
-  const url = buildWsUrl();
-  ws = new WebSocket(url);
+  if (isUnmounted || !shouldReconnect) return;
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
 
-  ws.onopen = () => {
+  const url = buildWsUrl();
+  const socket = new WebSocket(url);
+  ws = socket;
+
+  socket.onopen = () => {
     // Server auto-creates the first session and sends 'created'
   };
 
-  ws.onmessage = (event) => {
+  socket.onmessage = (event) => {
+    if (socket !== ws || isUnmounted) return;
     const data = typeof event.data === "string" ? event.data : "";
     if (data.charCodeAt(0) === 0x7b) {
       try {
@@ -306,17 +319,16 @@ function connect() {
     }
   };
 
-  // On reconnect, recreate all terminals for existing sessions
-  ws.onopen = () => {
-    // Server will auto-create the first session again
+  socket.onclose = () => {
+    if (socket === ws) ws = null;
+    if (isUnmounted || !shouldReconnect) return;
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      connect();
+    }, 3000);
   };
 
-  ws.onclose = () => {
-    // Reconnect after delay
-    setTimeout(connect, 3000);
-  };
-
-  ws.onerror = () => {
+  socket.onerror = () => {
     // let onclose handle reconnect
   };
 }
@@ -345,6 +357,15 @@ function handleControl(msg: any) {
     case "switched":
       // Server confirmed switch — frontend already mounted in switchSession()
       break;
+
+    case "output": {
+      const entry = msg.id ? termMap.get(msg.id) : null;
+      const targetTerm = entry?.term || (msg.id === activeSessionId.value ? activeTerm : null);
+      if (targetTerm && typeof msg.data === "string") {
+        targetTerm.write(msg.data);
+      }
+      break;
+    }
 
     case "exited": {
       const s = sessions.value.find((s) => s.id === msg.id);
@@ -514,6 +535,8 @@ function handleMobileChange(e: MediaQueryListEvent | MediaQueryList) {
 // ─── Lifecycle ──────────────────────────────────────────────────
 
 onMounted(() => {
+  isUnmounted = false;
+  shouldReconnect = true;
   mobileQuery = window.matchMedia("(max-width: 768px)");
   handleMobileChange(mobileQuery);
   mobileQuery.addEventListener("change", handleMobileChange);
@@ -521,7 +544,15 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+  isUnmounted = true;
+  shouldReconnect = false;
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
   mobileQuery?.removeEventListener("change", handleMobileChange);
+  resizeObserver?.disconnect();
+  resizeObserver = null;
   unmountActiveTerminal();
   // Dispose all terminal instances
   for (const entry of termMap.values()) {

@@ -5,7 +5,7 @@ import { useAppStore } from '@/stores/hermes/app'
 import { useProfilesStore } from '@/stores/hermes/profiles'
 import { fetchContextLength } from '@/api/hermes/sessions'
 import { NButton, NTooltip, NSwitch } from 'naive-ui'
-import { computed, ref, onMounted, watch } from 'vue'
+import { computed, ref, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 const chatStore = useChatStore()
@@ -17,18 +17,22 @@ const attachments = ref<Attachment[]>([])
 const isDragging = ref(false)
 const dragCounter = ref(0)
 const isComposing = ref(false)
+const sending = ref(false)
 
 // 自动播放语音开关
 const autoPlaySpeech = ref(false)
 
-// 从 localStorage 读取设置
+// 从 store 或 localStorage 读取设置
 onMounted(() => {
+  // 优先使用 store 已有值
+  autoPlaySpeech.value = chatStore.autoPlaySpeechEnabled
+  // localStorage 可以覆盖
   const saved = localStorage.getItem('autoPlaySpeech')
   if (saved !== null) {
     autoPlaySpeech.value = saved === 'true'
-    // 同步到 chat store
-    chatStore.setAutoPlaySpeech(autoPlaySpeech.value)
   }
+  // 同步到 chat store
+  chatStore.setAutoPlaySpeech(autoPlaySpeech.value)
 })
 
 // 监听变化并保存
@@ -38,7 +42,7 @@ watch(autoPlaySpeech, (value) => {
   chatStore.setAutoPlaySpeech(value)
 })
 
-const canSend = computed(() => inputText.value.trim() || attachments.value.length > 0)
+const canSend = computed(() => !!inputText.value.trim() || attachments.value.length > 0)
 
 // --- Context info ---
 
@@ -77,6 +81,15 @@ function formatTokens(n: number): string {
 }
 
 // --- File attachment helpers ---
+
+function revokeAttachmentUrl(att: Attachment) {
+  if (att.url?.startsWith('blob:')) URL.revokeObjectURL(att.url)
+}
+
+function clearAttachments() {
+  attachments.value.forEach(revokeAttachmentUrl)
+  attachments.value = []
+}
 
 function addFile(file: File) {
   if (attachments.value.find(a => a.name === file.name)) return
@@ -153,16 +166,25 @@ function handleDrop(e: DragEvent) {
 
 // --- Send ---
 
-function handleSend() {
+async function handleSend() {
+  if (sending.value || chatStore.isStreaming) return
   const text = inputText.value.trim()
   if (!text && attachments.value.length === 0) return
 
-  chatStore.sendMessage(text, attachments.value.length > 0 ? attachments.value : undefined)
-  inputText.value = ''
-  attachments.value = []
+  const attachmentsToSend = attachments.value.length > 0 ? [...attachments.value] : undefined
+  sending.value = true
+  try {
+    await chatStore.sendMessage(text, attachmentsToSend)
+    inputText.value = ''
+    clearAttachments()
 
-  if (textareaRef.value) {
-    textareaRef.value.style.height = 'auto'
+    if (textareaRef.value) {
+      textareaRef.value.style.height = 'auto'
+    }
+  } catch (err) {
+    console.error('[ChatInput] Failed to send message:', err)
+  } finally {
+    sending.value = false
   }
 }
 
@@ -197,10 +219,14 @@ function handleInput(e: Event) {
 function removeAttachment(id: string) {
   const idx = attachments.value.findIndex(a => a.id === id)
   if (idx !== -1) {
-    URL.revokeObjectURL(attachments.value[idx].url)
+    revokeAttachmentUrl(attachments.value[idx])
     attachments.value.splice(idx, 1)
   }
 }
+
+onBeforeUnmount(() => {
+  clearAttachments()
+})
 
 function formatSize(bytes: number): string {
   if (bytes < 1024) return bytes + ' B'
@@ -324,7 +350,7 @@ function isImage(type: string): boolean {
         <NButton
           size="small"
           type="primary"
-          :disabled="!canSend || chatStore.isStreaming"
+          :disabled="!canSend || chatStore.isStreaming || sending"
           @click="handleSend"
         >
           <template #icon>

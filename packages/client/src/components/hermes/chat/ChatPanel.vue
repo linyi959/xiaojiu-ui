@@ -21,16 +21,27 @@ import MessageList from "./MessageList.vue";
 import SessionListItem from "./SessionListItem.vue";
 import DrawerPanel from "./DrawerPanel.vue";
 import ModelSelector from "@/components/layout/ModelSelector.vue";
+import { useCommandPalette } from "@/composables/useCommandPalette";
 
 const chatStore = useChatStore();
 const sessionBrowserPrefsStore = useSessionBrowserPrefsStore();
 const message = useMessage();
 const { t } = useI18n();
+const { open: openPalette } = useCommandPalette();
+
+const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad|iPod/.test(navigator.platform)
+const cmdKey = isMac ? '⌘' : 'Ctrl'
+const reloadPage = () => window.location.reload()
 
 const showDrawer = ref(false);
 const drawerActiveTab = ref<"terminal" | "files">("files");
 
 const currentMode = ref<"chat" | "live">("chat");
+function openDrawer(tab: "terminal" | "files") {
+  drawerActiveTab.value = tab;
+  showDrawer.value = true;
+}
+
 
 // Initialize synchronously from the media query so first paint is correct.
 // On narrow viewports the session list is an absolute-positioned overlay
@@ -70,9 +81,19 @@ const showRenameModal = ref(false);
 const renameValue = ref("");
 const renameSessionId = ref<string | null>(null);
 const renameInputRef = ref<InstanceType<typeof NInput> | null>(null);
-const collapsedGroups = ref<Set<string>>(
-  new Set(JSON.parse(localStorage.getItem("hermes_collapsed_groups") || "[]")),
-);
+function loadCollapsedGroups(): Set<string> {
+  try {
+    const raw = localStorage.getItem('hermes_collapsed_groups')
+    if (!raw) return new Set()
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? new Set(parsed.filter((v: unknown): v is string => typeof v === 'string')) : new Set()
+  } catch {
+    localStorage.removeItem('hermes_collapsed_groups')
+    return new Set()
+  }
+}
+
+const collapsedGroups = ref<Set<string>>(loadCollapsedGroups());
 
 // Source sort order: api_server first, cron last, others alphabetical
 function sourceSortKey(source: string): number {
@@ -545,7 +566,47 @@ async function handleWorkspaceConfirm() {
             class="header-model-selector"
             @selected="handleHeaderModelSelected"
           />
-          <!-- chat/live mode toggle hidden -->
+
+          <button
+            v-if="!isMobile"
+            type="button"
+            class="header-icon-btn"
+            title="刷新当前会话页面"
+            @click="reloadPage()"
+          >
+            <span class="btn-icon-refresh">↻</span>
+          </button>
+
+          <button
+            v-if="!isMobile"
+            type="button"
+            class="header-icon-btn"
+            :title="`唤出指令面板（${cmdKey}K）`"
+            @click="openPalette()"
+          >
+            <span class="btn-icon-cmd">/</span>
+            <span class="btn-label">指令</span>
+          </button>
+          <button
+            v-if="!isMobile"
+            type="button"
+            class="header-icon-btn"
+            title="打开文件抽屉"
+            @click="openDrawer('files')"
+          >
+            <span class="btn-icon-cmd">📁</span>
+            <span class="btn-label">文件</span>
+          </button>
+          <button
+            v-if="!isMobile"
+            type="button"
+            class="header-icon-btn"
+            title="打开终端抽屉"
+            @click="openDrawer('terminal')"
+          >
+            <span class="btn-icon-cmd">⌁</span>
+            <span class="btn-label">终端</span>
+          </button>
           <template v-if="currentMode === 'chat'">
             <NTooltip trigger="hover">
               <template #trigger>
@@ -994,6 +1055,48 @@ async function handleWorkspaceConfirm() {
   margin-right: 4px;
 }
 
+.header-icon-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  background: rgba(99, 231, 255, 0.06);
+  border: 1px solid rgba(99, 231, 255, 0.18);
+  border-radius: 8px;
+  color: #cbe5ff;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+
+  &:hover {
+    background: rgba(99, 231, 255, 0.14);
+    border-color: rgba(99, 231, 255, 0.36);
+    color: #edf7ff;
+    box-shadow: 0 0 12px rgba(99, 231, 255, 0.18);
+  }
+
+  .btn-icon-refresh {
+    font-family: 'Fira Code', monospace;
+    font-size: 14px;
+    font-weight: 600;
+    color: #63e7ff;
+    text-shadow: 0 0 8px rgba(99, 231, 255, 0.42);
+  }
+
+  .btn-icon-cmd {
+    font-family: 'Fira Code', monospace;
+    font-size: 14px;
+    font-weight: 600;
+    color: #63e7ff;
+    text-shadow: 0 0 8px rgba(99, 231, 255, 0.5);
+  }
+
+  .btn-label {
+    font-weight: 500;
+    letter-spacing: 0.02em;
+  }
+}
+
 .chat-mode-toggle {
   display: flex;
   align-items: center;
@@ -1020,124 +1123,4 @@ async function handleWorkspaceConfirm() {
   cursor: default;
 }
 
-// ─── Drawer button ─────────────────────────────────────────────
-
-.drawer-button-wrapper {
-  position: absolute;
-  right: 16px;
-  top: 50%;
-  transform: translateY(-50%);
-  z-index: 100;
-  background: $bg-card;
-  border-radius: 50%;
-  box-shadow:
-    0 0 10px rgba(255, 107, 107, 0.4),
-    0 0 20px rgba(255, 107, 107, 0.2);
-  animation: rainbow-glow 8s linear infinite;
-  transition: all $transition-fast;
-
-  &:hover {
-    animation-play-state: paused;
-    box-shadow:
-      0 0 15px rgba(255, 107, 107, 0.6),
-      0 0 30px rgba(255, 107, 107, 0.3);
-  }
-}
-
-.drawer-button {
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
-  background: rgba(var(--accent-primary-rgb), 0.1);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  transition: all $transition-fast;
-
-  svg {
-    width: 18px;
-    height: 18px;
-    color: var(--accent-primary);
-  }
-
-  &:hover {
-    transform: scale(1.1);
-  }
-}
-
-@keyframes rainbow-glow {
-  0% {
-    box-shadow:
-      0 0 0 2px #ff6b6b,
-      0 0 10px rgba(255, 107, 107, 0.4),
-      0 0 20px rgba(255, 107, 107, 0.2);
-    border-color: #ff6b6b;
-    color: #ff6b6b;
-  }
-  16.66% {
-    box-shadow:
-      0 0 0 2px #feca57,
-      0 0 10px rgba(254, 202, 87, 0.4),
-      0 0 20px rgba(254, 202, 87, 0.2);
-    border-color: #feca57;
-    color: #feca57;
-  }
-  33.33% {
-    box-shadow:
-      0 0 0 2px #48dbfb,
-      0 0 10px rgba(72, 219, 251, 0.4),
-      0 0 20px rgba(72, 219, 251, 0.2);
-    border-color: #48dbfb;
-    color: #48dbfb;
-  }
-  50% {
-    box-shadow:
-      0 0 0 2px #ff9ff3,
-      0 0 10px rgba(255, 159, 243, 0.4),
-      0 0 20px rgba(255, 159, 243, 0.2);
-    border-color: #ff9ff3;
-    color: #ff9ff3;
-  }
-  66.66% {
-    box-shadow:
-      0 0 0 2px #54a0ff,
-      0 0 10px rgba(84, 160, 255, 0.4),
-      0 0 20px rgba(84, 160, 255, 0.2);
-    border-color: #54a0ff;
-    color: #54a0ff;
-  }
-  83.33% {
-    box-shadow:
-      0 0 0 2px #5f27cd,
-      0 0 10px rgba(95, 39, 205, 0.4),
-      0 0 20px rgba(95, 39, 205, 0.2);
-    border-color: #5f27cd;
-    color: #5f27cd;
-  }
-  100% {
-    box-shadow:
-      0 0 0 2px #ff6b6b,
-      0 0 10px rgba(255, 107, 107, 0.4),
-      0 0 20px rgba(255, 107, 107, 0.2);
-    border-color: #ff6b6b;
-    color: #ff6b6b;
-  }
-}
-
-@media (max-width: $breakpoint-mobile) {
-  .drawer-button-wrapper {
-    right: 12px;
-  }
-
-  .drawer-button {
-    width: 36px;
-    height: 36px;
-
-    svg {
-      width: 16px;
-      height: 16px;
-    }
-  }
-}
 </style>

@@ -25,19 +25,19 @@ export function useKeyboard() {
       return
     }
 
-    // ⌘K / Ctrl-K → 小九中枢指令面板（全局入口）
-    if (mod && e.key.toLowerCase() === 'k') {
-      if (router.currentRoute.value.name === 'login') return
-      e.preventDefault()
-      openPalette()
-      return
-    }
-
-    // ⌘P / Ctrl-P → 会话搜索（Mac 习惯：Quick Open）
-    if (mod && e.key.toLowerCase() === 'p') {
+    // ⌘K / Ctrl-K → 会话搜索；保留 ⌘P / Ctrl-P 作为 Quick Open 别名
+    if (mod && ['k', 'p'].includes(e.key.toLowerCase())) {
       if (router.currentRoute.value.name === 'login') return
       e.preventDefault()
       openSessionSearch()
+      return
+    }
+
+    // ⌘⇧K / Ctrl-Shift-K → 小九中枢指令面板（全局入口）
+    if (mod && e.shiftKey && e.key.toLowerCase() === 'k') {
+      if (router.currentRoute.value.name === 'login') return
+      e.preventDefault()
+      openPalette()
       return
     }
 

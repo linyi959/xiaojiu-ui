@@ -459,13 +459,19 @@ export async function usageStats(ctx: any) {
     const d = new Date(now)
     d.setDate(d.getDate() - i)
     const key = d.toISOString().slice(0, 10)
-    dayMap.set(key, { date: key, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0, sessions: 0, errors: 0, cost: 0 })
+    dayMap.set(key, { date: key, tokens: 0, cache: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0, sessions: 0, errors: 0, cost: 0 } as any)
   }
   for (const d of [...local.by_day, ...hermes.by_day]) {
     const existing = dayMap.get(d.date)
     if (existing) {
-      existing.input_tokens += d.input_tokens; existing.output_tokens += d.output_tokens
-      existing.cache_read_tokens += d.cache_read_tokens; existing.cache_write_tokens += d.cache_write_tokens
+      const inputTokens = Number(d.input_tokens || 0)
+      const outputTokens = Number(d.output_tokens || 0)
+      const cacheReadTokens = Number((d as any).cache_read_tokens ?? (d as any).cache ?? 0)
+      const cacheWriteTokens = Number(d.cache_write_tokens || 0)
+      existing.input_tokens += inputTokens; existing.output_tokens += outputTokens
+      existing.cache_read_tokens += cacheReadTokens; existing.cache_write_tokens += cacheWriteTokens
+      ;(existing as any).tokens = Number((existing as any).tokens || 0) + Number((d as any).tokens ?? (inputTokens + outputTokens))
+      ;(existing as any).cache = Number((existing as any).cache || 0) + Number((d as any).cache ?? cacheReadTokens)
       existing.sessions += d.sessions; existing.errors += d.errors; existing.cost += d.cost
     }
   }
